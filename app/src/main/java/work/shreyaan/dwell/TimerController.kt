@@ -15,7 +15,24 @@ object TimerController {
         )
 
     fun startTimer(c: Context, durationMinutes: Int) {
-        val end = System.currentTimeMillis() + durationMinutes * 60_000L
+        val now = System.currentTimeMillis()
+        val end = TimerMath.endFromDuration(now, durationMinutes)
+        Prefs.clearWatchPrompt(c)
+        Prefs.setTimerStartedAt(c, now)
+        Prefs.setTimerEnd(c, end)
+        scheduleAlarm(c, end)
+        Notifications.notifyTimerRunning(c, end)
+        WearSync.pushState(c)
+    }
+
+    fun extendTimer(c: Context, extraMinutes: Int) {
+        val now = System.currentTimeMillis()
+        val currentEnd = Prefs.getTimerEnd(c)
+        val end = TimerMath.extendedEnd(now, currentEnd, extraMinutes)
+        if (Prefs.getTimerStartedAt(c) <= 0L) {
+            Prefs.setTimerStartedAt(c, now)
+        }
+        Prefs.clearWatchPrompt(c)
         Prefs.setTimerEnd(c, end)
         scheduleAlarm(c, end)
         Notifications.notifyTimerRunning(c, end)
@@ -36,10 +53,19 @@ object TimerController {
 
     fun cancelTimer(c: Context) {
         c.getSystemService(AlarmManager::class.java).cancel(alarmIntent(c))
+        Prefs.clearWatchPrompt(c)
         Prefs.setTimerEnd(c, 0L)
+        Prefs.setTimerStartedAt(c, 0L)
+        WearSync.pushState(c)
+    }
+
+    fun clearCompletedTimer(c: Context) {
+        c.getSystemService(AlarmManager::class.java).cancel(alarmIntent(c))
+        Prefs.setTimerEnd(c, 0L)
+        Prefs.setTimerStartedAt(c, 0L)
         WearSync.pushState(c)
     }
 
     fun isRunning(c: Context): Boolean =
-        Prefs.getTimerEnd(c) > System.currentTimeMillis()
+        TimerMath.isRunning(Prefs.getTimerEnd(c), System.currentTimeMillis())
 }

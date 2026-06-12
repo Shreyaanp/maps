@@ -44,9 +44,12 @@ object GeofenceManager {
             .addGeofences(request, pendingIntent(c))
             .addOnSuccessListener {
                 Prefs.setArmed(c, true)
+                WearSync.pushState(c)
                 onResult(true, null)
             }
             .addOnFailureListener { e ->
+                Prefs.setArmed(c, false)
+                WearSync.pushState(c)
                 onResult(false, e.message)
             }
     }
@@ -55,7 +58,10 @@ object GeofenceManager {
         LocationServices.getGeofencingClient(c)
             .removeGeofences(pendingIntent(c))
             .addOnCompleteListener {
-                Prefs.setArmed(c, false)
+                if (it.isSuccessful) {
+                    Prefs.setArmed(c, false)
+                }
+                WearSync.pushState(c)
                 onResult(it.isSuccessful)
             }
     }

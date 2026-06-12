@@ -14,7 +14,7 @@ android {
         targetSdk = 34
         // Wear artifacts need version codes distinct from the phone app's
         // (phone uses 1-999, wear uses 1001+).
-        versionCode = 1001
+        versionCode = 1002
         versionName = "1.0"
     }
 
@@ -59,4 +59,10 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("com.google.android.gms:play-services-wearable:18.2.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
+    implementation("androidx.wear.tiles:tiles:1.6.0")
+    implementation("androidx.wear.protolayout:protolayout:1.4.0")
+    implementation("androidx.wear.protolayout:protolayout-material:1.4.0")
+    implementation("com.google.guava:guava:33.3.1-android")
+
+    testImplementation("junit:junit:4.13.2")
 }

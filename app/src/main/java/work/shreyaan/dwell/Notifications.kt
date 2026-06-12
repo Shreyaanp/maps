@@ -140,6 +140,21 @@ object Notifications {
         nm(c).notify(NOTIF_DONE, n)
     }
 
+    fun clearExitQuestion(c: Context) {
+        nm(c).cancel(NOTIF_EXIT)
+    }
+
+    fun clearDone(c: Context) {
+        nm(c).cancel(NOTIF_DONE)
+    }
+
+    fun clearAll(c: Context) {
+        val manager = nm(c)
+        manager.cancel(NOTIF_RUNNING)
+        manager.cancel(NOTIF_DONE)
+        manager.cancel(NOTIF_EXIT)
+    }
+
     fun formatDuration(minutes: Int): String {
         val h = minutes / 60
         val m = minutes % 60

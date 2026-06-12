@@ -10,6 +10,7 @@ class GeofenceReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val event = GeofencingEvent.fromIntent(intent) ?: return
         if (event.hasError()) return
+        if (!Prefs.isArmed(context) || !Prefs.hasPlace(context)) return
 
         when (event.geofenceTransition) {
             Geofence.GEOFENCE_TRANSITION_ENTER -> {
@@ -21,7 +22,9 @@ class GeofenceReceiver : BroadcastReceiver() {
             }
             Geofence.GEOFENCE_TRANSITION_EXIT -> {
                 if (TimerController.isRunning(context)) {
+                    Prefs.setWatchPrompt(context, Prefs.WATCH_PROMPT_LEAVE_EARLY)
                     Notifications.notifyExitQuestion(context, Prefs.getTimerEnd(context))
+                    WearSync.pushState(context)
                 }
             }
         }

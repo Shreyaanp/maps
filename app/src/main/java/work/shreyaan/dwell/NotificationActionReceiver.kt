@@ -14,7 +14,11 @@ class NotificationActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val nm = context.getSystemService(NotificationManager::class.java)
         when (intent.action) {
-            ACTION_KEEP -> nm.cancel(Notifications.NOTIF_EXIT)
+            ACTION_KEEP -> {
+                Prefs.clearWatchPrompt(context)
+                nm.cancel(Notifications.NOTIF_EXIT)
+                WearSync.pushState(context)
+            }
             ACTION_CANCEL -> {
                 TimerController.cancelTimer(context)
                 Notifications.notifyTimerCancelled(context)

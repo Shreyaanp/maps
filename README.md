@@ -7,13 +7,14 @@ and alerts you — including on your **Pixel Watch** — when the time is up.
 Modules:
 
 - `app/` — the phone app: map, geofence, timer, notifications.
-- `wear/` — the Wear OS companion app: live countdown screen on the watch with
-  a Cancel button, synced from the phone over the Data Layer API.
+- `wear/` — the Wear OS companion app: swipeable glance/focus/action screens,
+  a Tile, local countdown continuity, notifications, and quick keep/cancel/extend
+  actions synced from the phone over the Data Layer API.
 
 ## How it works
 
-1. Open the app and **long-press the map** to drop a pin on your place
-   (parking spot, office, etc.).
+1. Open the app and choose a place by searching, using your current location,
+   or long-pressing the map to drop a pin (parking spot, office, etc.).
 2. Adjust the **radius** slider (how close counts as "arrived") and the
    **duration** in hours (default 4.5).
 3. Tap **Arm geofence**. Grant the permissions it asks for — location must be
@@ -38,10 +39,11 @@ Two layers of watch support:
    notifications to the watch — the live countdown, the keep/cancel question,
    and the final alarm. Make sure notifications from Dwell are not muted in
    the Pixel Watch app's "Watch notifications" settings.
-2. **The `wear/` watch app:** shows the running countdown full-screen on the
-   watch with a Cancel button that also cancels on the phone. Install it on
-   the watch via `adb install` over the watch's Wireless debugging, or
-   distribute both apps through Google Play (phone track + Wear OS track).
+2. **The `wear/` watch app:** shows ready, active, leave-early, and time-up
+   states on compact swipeable screens. The active timer syncs an absolute end
+   time, so the watch can keep counting down if the phone is briefly not nearby.
+   Install it on the watch via `adb install` over the watch's Wireless debugging,
+   or distribute both apps through Google Play (phone track + Wear OS track).
 
 ## CI/CD
 

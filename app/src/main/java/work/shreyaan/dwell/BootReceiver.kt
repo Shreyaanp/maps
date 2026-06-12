@@ -19,10 +19,14 @@ class BootReceiver : BroadcastReceiver() {
         if (end > now) {
             TimerController.scheduleAlarm(context, end)
             Notifications.notifyTimerRunning(context, end)
+            WearSync.pushState(context)
         } else if (end != 0L) {
             // Timer expired while the phone was off.
+            Prefs.setWatchPrompt(context, Prefs.WATCH_PROMPT_TIME_UP)
             Prefs.setTimerEnd(context, 0L)
+            Prefs.setTimerStartedAt(context, 0L)
             Notifications.notifyTimerDone(context, Prefs.getDurationMinutes(context))
+            WearSync.pushState(context)
         }
 
         val hasLocation = ContextCompat.checkSelfPermission(

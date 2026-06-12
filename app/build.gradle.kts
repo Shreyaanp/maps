@@ -1,8 +1,25 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val localProperties = Properties().apply {
+    val localFile = rootProject.file("local.properties")
+    if (localFile.exists()) {
+        localFile.inputStream().use { load(it) }
+    }
+}
+
+fun configValue(name: String, fallback: String): String =
+    localProperties.getProperty(name)?.takeIf { it.isNotBlank() }
+        ?: System.getenv(name)?.takeIf { it.isNotBlank() }
+        ?: fallback
+
+fun String.asBuildConfigString(): String =
+    "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 android {
     namespace = "work.shreyaan.dwell"
@@ -12,8 +29,30 @@ android {
         applicationId = "work.shreyaan.dwell"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = 3
         versionName = "1.0"
+        buildConfigField(
+            "String",
+            "DWELL_API_BASE_URL",
+            configValue("DWELL_API_BASE_URL", "https://dwell.shreyaan.work")
+                .asBuildConfigString(),
+        )
+        buildConfigField(
+            "String",
+            "GOOGLE_SERVER_CLIENT_ID",
+            configValue(
+                "GOOGLE_SERVER_CLIENT_ID",
+                configValue("GOOGLE_WEB_CLIENT_ID", ""),
+            ).asBuildConfigString(),
+        )
+        buildConfigField(
+            "String",
+            "GOOGLE_WEB_CLIENT_ID",
+            configValue(
+                "GOOGLE_SERVER_CLIENT_ID",
+                configValue("GOOGLE_WEB_CLIENT_ID", ""),
+            ).asBuildConfigString(),
+        )
     }
 
     signingConfigs {
@@ -45,17 +84,25 @@ android {
         jvmTarget = "17"
     }
     buildFeatures {
+        buildConfig = true
         compose = true
     }
+
 }
 
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("com.google.android.gms:play-services-wearable:18.2.0")
+    implementation("androidx.credentials:credentials:1.6.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.2.0")
     implementation("org.osmdroid:osmdroid-android:6.1.20")
+
+    testImplementation("junit:junit:4.13.2")
 }
