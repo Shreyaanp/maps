@@ -1,4 +1,4 @@
-# GeoTimer
+# Dwell
 
 An Android phone app + Wear OS watch app that automatically starts a countdown
 timer (default **4.5 hours**) when you arrive at a place you've pinned on a map,
@@ -36,7 +36,7 @@ Two layers of watch support:
 
 1. **Notification mirroring (no install needed):** Wear OS mirrors all phone
    notifications to the watch — the live countdown, the keep/cancel question,
-   and the final alarm. Make sure notifications from GeoTimer are not muted in
+   and the final alarm. Make sure notifications from Dwell are not muted in
    the Pixel Watch app's "Watch notifications" settings.
 2. **The `wear/` watch app:** shows the running countdown full-screen on the
    watch with a Cancel button that also cancels on the phone. Install it on

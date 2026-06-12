@@ -1,4 +1,4 @@
-package xyz.mercle.geotimer
+package work.shreyaan.dwell
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -47,7 +47,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private fun prefs(c: Context): SharedPreferences =
-    c.getSharedPreferences("geotimer", Context.MODE_PRIVATE)
+    c.getSharedPreferences("dwell", Context.MODE_PRIVATE)
 
 @Composable
 fun WatchScreen() {
@@ -62,7 +62,7 @@ fun WatchScreen() {
         runCatching {
             val items = Wearable.getDataClient(context).dataItems.await()
             for (item in items) {
-                if (item.uri.path == "/geotimer/state") {
+                if (item.uri.path == "/dwell/state") {
                     val map = DataMapItem.fromDataItem(item).dataMap
                     prefs(context).edit()
                         .putLong("timer_end", map.getLong("end"))
@@ -90,7 +90,7 @@ fun WatchScreen() {
                 val h = left / 3_600_000
                 val m = (left / 60_000) % 60
                 val s = (left / 1000) % 60
-                Text("GeoTimer", style = MaterialTheme.typography.caption1)
+                Text("Dwell", style = MaterialTheme.typography.caption1)
                 Text("${h}h ${m}m ${s}s", style = MaterialTheme.typography.title1)
                 Text(
                     "ends " + DateFormat.getTimeInstance(DateFormat.SHORT)
@@ -108,7 +108,7 @@ fun WatchScreen() {
                                     .connectedNodes.await()
                                 for (node in nodes) {
                                     Wearable.getMessageClient(context)
-                                        .sendMessage(node.id, "/geotimer/cancel", null)
+                                        .sendMessage(node.id, "/dwell/cancel", null)
                                         .await()
                                 }
                             }

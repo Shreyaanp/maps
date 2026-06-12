@@ -1,4 +1,4 @@
-package xyz.mercle.geotimer
+package work.shreyaan.dwell
 
 import android.annotation.SuppressLint
 import android.app.PendingIntent
@@ -9,7 +9,7 @@ import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
 
 object GeofenceManager {
-    private const val GEOFENCE_ID = "geotimer_zone"
+    private const val GEOFENCE_ID = "dwell_zone"
 
     // Geofencing requires a MUTABLE PendingIntent so Play services can attach
     // the triggering event data.

@@ -1,11 +1,11 @@
-package xyz.mercle.geotimer
+package work.shreyaan.dwell
 
 import android.content.Context
 import android.content.SharedPreferences
 
 object Prefs {
     private fun p(c: Context): SharedPreferences =
-        c.getSharedPreferences("geotimer", Context.MODE_PRIVATE)
+        c.getSharedPreferences("dwell", Context.MODE_PRIVATE)
 
     fun hasPlace(c: Context): Boolean = p(c).contains("lat")
     fun getLat(c: Context): Double = Double.fromBits(p(c).getLong("lat", 0L))

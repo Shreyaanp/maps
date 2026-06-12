@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "xyz.mercle.geotimer"
+    namespace = "work.shreyaan.dwell"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "xyz.mercle.geotimer"
+        applicationId = "work.shreyaan.dwell"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

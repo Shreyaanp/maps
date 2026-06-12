@@ -1,4 +1,4 @@
-package xyz.mercle.geotimer
+package work.shreyaan.dwell
 
 import android.Manifest
 import android.content.BroadcastReceiver

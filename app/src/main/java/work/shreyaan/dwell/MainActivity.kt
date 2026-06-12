@@ -1,4 +1,4 @@
-package xyz.mercle.geotimer
+package work.shreyaan.dwell
 
 import android.Manifest
 import android.app.AlarmManager
@@ -71,7 +71,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(Modifier.fillMaxSize()) {
-                    GeoTimerScreen()
+                    DwellScreen()
                 }
             }
         }
@@ -104,7 +104,7 @@ private class ZoneOverlays {
 }
 
 @Composable
-fun GeoTimerScreen() {
+fun DwellScreen() {
     val context = LocalContext.current
 
     var pin by remember {

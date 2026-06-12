@@ -1,4 +1,4 @@
-package xyz.mercle.geotimer
+package work.shreyaan.dwell
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -70,7 +70,7 @@ object Notifications {
         ensureChannels(c)
         val n = Notification.Builder(c, CHANNEL_STATUS)
             .setSmallIcon(R.drawable.ic_stat_timer)
-            .setContentTitle("GeoTimer running")
+            .setContentTitle("Dwell running")
             .setContentText("Ends at ${timeText(end)}")
             .setWhen(end)
             .setUsesChronometer(true)

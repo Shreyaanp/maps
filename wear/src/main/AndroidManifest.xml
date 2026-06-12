@@ -35,7 +35,7 @@
                 <data
                     android:scheme="wear"
                     android:host="*"
-                    android:pathPrefix="/geotimer" />
+                    android:pathPrefix="/dwell" />
             </intent-filter>
         </service>
     </application>

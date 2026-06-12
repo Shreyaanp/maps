@@ -1,4 +1,4 @@
-package xyz.mercle.geotimer
+package work.shreyaan.dwell
 
 import android.app.NotificationManager
 import android.content.BroadcastReceiver
@@ -7,8 +7,8 @@ import android.content.Intent
 
 class NotificationActionReceiver : BroadcastReceiver() {
     companion object {
-        const val ACTION_KEEP = "xyz.mercle.geotimer.action.KEEP_TIMER"
-        const val ACTION_CANCEL = "xyz.mercle.geotimer.action.CANCEL_TIMER"
+        const val ACTION_KEEP = "work.shreyaan.dwell.action.KEEP_TIMER"
+        const val ACTION_CANCEL = "work.shreyaan.dwell.action.CANCEL_TIMER"
     }
 
     override fun onReceive(context: Context, intent: Intent) {

@@ -1,4 +1,4 @@
-package xyz.mercle.geotimer
+package work.shreyaan.dwell
 
 import android.content.Context
 import com.google.android.gms.wearable.PutDataMapRequest
@@ -10,7 +10,7 @@ import com.google.android.gms.wearable.Wearable
  */
 object WearSync {
     fun pushState(c: Context) {
-        val request = PutDataMapRequest.create("/geotimer/state").apply {
+        val request = PutDataMapRequest.create("/dwell/state").apply {
             dataMap.putLong("end", Prefs.getTimerEnd(c))
             dataMap.putInt("duration_min", Prefs.getDurationMinutes(c))
             dataMap.putLong("updated", System.currentTimeMillis())

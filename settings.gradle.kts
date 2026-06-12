@@ -12,6 +12,6 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "GeoTimer"
+rootProject.name = "Dwell"
 include(":app")
 include(":wear")
