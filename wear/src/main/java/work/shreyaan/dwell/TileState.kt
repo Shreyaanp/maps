@@ -9,6 +9,7 @@ data class TileState(
 
 object TileStateCalculator {
     const val PROMPT_NONE = "none"
+    const val PROMPT_START_TIMER = "start_timer"
     const val PROMPT_LEAVE_EARLY = "leave_early"
     const val PROMPT_TIME_UP = "time_up"
 
@@ -16,12 +17,24 @@ object TileStateCalculator {
         hasPlace: Boolean,
         placeLabel: String,
         armed: Boolean,
+        needsSetup: Boolean = false,
+        registeredPlaceCount: Int = 0,
         timerEnd: Long,
         prompt: String,
         now: Long,
     ): TileState {
         val place = placeLabel.shortTilePlace()
         return when {
+            prompt == PROMPT_START_TIMER -> TileState(
+                title = if (timerEnd > now) {
+                    if (place.isBlank()) "Switch place?" else "Switch to $place?"
+                } else {
+                    if (place.isBlank()) "Arrived?" else "Arrived $place?"
+                },
+                primary = if (timerEnd > now) "Switch?" else "Start?",
+                secondary = "Confirm timer",
+                action = "Open",
+            )
             prompt == PROMPT_LEAVE_EARLY && timerEnd > now -> TileState(
                 title = "Leaving ${place.ifBlank { "place" }}?",
                 primary = "Keep?",
@@ -38,12 +51,22 @@ object TileStateCalculator {
                 title = place.ifBlank { "Dwell" },
                 primary = formatRemaining(timerEnd - now),
                 secondary = "Still counting",
+                action = "Timer",
+            )
+            needsSetup -> TileState(
+                title = place.ifBlank { "Dwell" },
+                primary = "Setup",
+                secondary = "Open phone app",
                 action = "Open",
             )
             armed -> TileState(
                 title = place.ifBlank { "Dwell" },
                 primary = "Ready",
-                secondary = "Starts on arrival",
+                secondary = if (registeredPlaceCount > 1) {
+                    "$registeredPlaceCount places live"
+                } else {
+                    "Starts on arrival"
+                },
                 action = "Open",
             )
             hasPlace -> TileState(
@@ -78,4 +101,20 @@ object TileStateCalculator {
             .trim()
             .ifBlank { this }
             .take(18)
+}
+
+object WatchSyncCopy {
+    fun syncText(
+        lastUpdated: Long,
+        now: Long,
+        activeTimer: Boolean,
+    ): String {
+        if (lastUpdated <= 0L) return "No phone sync yet"
+        val ageMinutes = ((now - lastUpdated) / 60_000L).coerceAtLeast(0)
+        return when {
+            ageMinutes < 2L -> "Synced just now"
+            activeTimer -> "Phone not nearby, still counting"
+            else -> "Phone not nearby"
+        }
+    }
 }

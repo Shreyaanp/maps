@@ -42,15 +42,44 @@ object WearSync {
     }
 
     private fun stateMap(c: Context): DataMap = DataMap().apply {
-        putBoolean("has_place", Prefs.hasPlace(c))
-        putString("place_label", if (Prefs.hasPlace(c)) Prefs.getPlaceLabel(c) else "")
-        putBoolean("armed", Prefs.isArmed(c))
+        val place = Prefs.getWatchPlace(c)
+        val armedPlaces = Prefs.getArmedPlaces(c)
+        val registeredPlaceIds = Prefs.getRegisteredPlaceIds(c)
+        val liveArmedPlaces = armedPlaces.count { registeredPlaceIds.contains(it.id) }
+        putBoolean("has_place", place != null)
+        putString("place_label", place?.safeLabel.orEmpty())
+        putBoolean("armed", armedPlaces.isNotEmpty())
+        putBoolean(
+            "needs_setup",
+            shouldMarkWatchSetupNeeded(
+                watchPlace = place,
+                armedPlaces = armedPlaces,
+                registeredPlaceIds = registeredPlaceIds,
+            ),
+        )
+        putString("monitoring_error", Prefs.getMonitoringError(c))
         putLong("end", Prefs.getTimerEnd(c))
         putLong("started_at", Prefs.getTimerStartedAt(c))
-        putInt("duration_min", Prefs.getDurationMinutes(c))
-        putFloat("radius_m", Prefs.getRadius(c))
+        putInt("duration_min", place?.durationMinutes ?: Prefs.getDurationMinutes(c))
+        putFloat("radius_m", place?.radiusMeters ?: Prefs.getRadius(c))
         putString("prompt", Prefs.getWatchPrompt(c))
         putLong("prompt_updated", Prefs.getWatchPromptUpdated(c))
+        putInt("place_count", Prefs.getPlaces(c).size)
+        putInt("armed_place_count", armedPlaces.size)
+        putInt("registered_place_count", liveArmedPlaces)
         putLong("updated", System.currentTimeMillis())
+    }
+
+    internal fun shouldMarkWatchSetupNeeded(
+        watchPlace: DwellPlace?,
+        armedPlaces: List<DwellPlace>,
+        registeredPlaceIds: Set<String>,
+    ): Boolean {
+        if (armedPlaces.isEmpty()) return false
+        val liveArmedPlaces = armedPlaces.count { registeredPlaceIds.contains(it.id) }
+        val displayedPlaceNeedsSetup =
+            watchPlace?.monitoringEnabled == true &&
+                !registeredPlaceIds.contains(watchPlace.id)
+        return displayedPlaceNeedsSetup || liveArmedPlaces == 0
     }
 }

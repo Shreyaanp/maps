@@ -1,12 +1,13 @@
 # Dwell
 
 An Android phone app + Wear OS watch app that automatically starts a countdown
-timer (default **4.5 hours**) when you arrive at a place you've pinned on a map,
-and alerts you — including on your **Pixel Watch** — when the time is up.
+timer (default **4.5 hours**) when you arrive at a saved place, and alerts you
+on the phone and watch when the time is up.
 
 Modules:
 
-- `app/` — the phone app: map, geofence, timer, notifications.
+- `app/` — the phone app: MapLibre map, saved places, geofences, confidence
+  engine, timer, notifications.
 - `wear/` — the Wear OS companion app: swipeable glance/focus/action screens,
   a Tile, local countdown continuity, notifications, and quick keep/cancel/extend
   actions synced from the phone over the Data Layer API.
@@ -14,22 +15,36 @@ Modules:
 ## How it works
 
 1. Open the app and choose a place by searching, using your current location,
-   or long-pressing the map to drop a pin (parking spot, office, etc.).
-2. Adjust the **radius** slider (how close counts as "arrived") and the
-   **duration** in hours (default 4.5).
-3. Tap **Arm geofence**. Grant the permissions it asks for — location must be
-   set to **"Allow all the time"** so arrival detection works with the app closed.
-4. When you physically enter the zone, the timer starts automatically. You get
-   an ongoing notification with a **live countdown** — Wear OS mirrors it to
-   your Pixel Watch, ticking included.
-5. When the duration elapses, a loud alarm-style notification fires on the
+   or long-pressing the map to drop a pin.
+2. Adjust the **radius** slider and default **duration**.
+3. Tap **Monitor**. Grant location, background location, notifications, and
+   physical activity permissions.
+4. Dwell registers a local inner arrival geofence plus a larger approach ring.
+   The approach ring wakes a lightweight confidence check; precise location is
+   requested only when needed to start or ask.
+5. When confidence is high, the timer starts automatically. Medium confidence
+   asks on the phone/watch. Low confidence keeps observing.
+6. You get an ongoing notification with a live countdown; Wear OS receives the
+   same absolute end time so it can keep counting if the phone is briefly away.
+7. When the duration elapses, a loud alarm-style notification fires on the
    phone and buzzes the watch.
-6. If you **leave the zone early**, a notification asks whether to keep or
+8. If you **leave the zone early**, a notification asks whether to keep or
    cancel the timer — the Keep/Cancel buttons work from the watch too.
-7. **Start timer now** runs the countdown manually without waiting for arrival
+9. **Start timer now** runs the countdown manually without waiting for arrival
    (also handy for testing).
 
-Timers and the armed geofence survive phone reboots.
+Timers and monitored places survive phone reboots when permissions remain
+available.
+
+## Map and location stack
+
+- Rendering: MapLibre.
+- Tiles/style: OpenFreeMap by default, with OSM attribution.
+- Search: Nominatim-compatible search with cache and manual submit behavior.
+- Arrival: Android geofencing + fused location + activity recognition.
+- Privacy: arrival decisions happen on-device. Dwell stores saved places, timer
+  state, account/session data when used, and local diagnostics; it does not store
+  continuous location history.
 
 ## Pixel Watch
 
@@ -69,12 +84,26 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 To install over Wi-Fi: enable Wireless debugging on the phone, then
 `adb pair <ip:port>` / `adb connect <ip:port>` and run the install command.
 
+For phone + watch local testing:
+
+```sh
+./scripts/setup-local-testing.sh
+```
+
+Then follow [FIELD_TEST.md](FIELD_TEST.md). To capture a privacy-safe field
+run while testing, use:
+
+```sh
+DURATION_SECONDS=900 ./scripts/capture-field-logs.sh
+```
+
 ## Testing the geofence without driving anywhere
 
 - Use **Start timer now** with a small duration (e.g. `0.05` hours = 3 min) to
   see the full notification → watch → alarm flow.
 - Or run the app in an Android emulator and simulate GPS positions from the
   emulator's location controls to cross the geofence boundary.
+- For release confidence, use a real phone/watch and complete `FIELD_TEST.md`.
 
 ## Known limitations
 
@@ -82,4 +111,5 @@ To install over Wi-Fi: enable Wireless debugging on the phone, then
   location checks to save battery).
 - If you deny "Allow all the time" location, arrival detection only works
   while the app is open.
-- One place at a time by design; re-pin and re-arm to change it.
+- OEM battery modes can delay background detection; use unrestricted battery
+  settings for the most reliable field test.

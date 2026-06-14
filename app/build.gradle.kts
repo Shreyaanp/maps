@@ -39,6 +39,26 @@ android {
         )
         buildConfigField(
             "String",
+            "NOMINATIM_BASE_URL",
+            configValue("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org")
+                .asBuildConfigString(),
+        )
+        buildConfigField(
+            "String",
+            "MAP_STYLE_URL",
+            configValue("MAP_STYLE_URL", "https://tiles.openfreemap.org/styles/liberty")
+                .asBuildConfigString(),
+        )
+        buildConfigField(
+            "String",
+            "NOMINATIM_USER_AGENT",
+            configValue(
+                "NOMINATIM_USER_AGENT",
+                "Dwell/1.0 (work.shreyaan.dwell; +https://dwell.shreyaan.work) Android",
+            ).asBuildConfigString(),
+        )
+        buildConfigField(
+            "String",
             "GOOGLE_SERVER_CLIENT_ID",
             configValue(
                 "GOOGLE_SERVER_CLIENT_ID",
@@ -102,7 +122,8 @@ dependencies {
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.2.0")
-    implementation("org.osmdroid:osmdroid-android:6.1.20")
+    implementation("org.maplibre.gl:android-sdk:11.11.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

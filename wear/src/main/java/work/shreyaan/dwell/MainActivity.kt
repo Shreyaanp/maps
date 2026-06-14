@@ -16,6 +16,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -84,15 +85,21 @@ private data class WatchState(
     val hasPlace: Boolean,
     val placeLabel: String,
     val armed: Boolean,
+    val needsSetup: Boolean,
+    val monitoringError: String,
     val timerEnd: Long,
     val timerStartedAt: Long,
     val durationMinutes: Int,
     val prompt: String,
     val promptUpdated: Long,
+    val placeCount: Int,
+    val armedPlaceCount: Int,
+    val registeredPlaceCount: Int,
     val lastUpdated: Long,
 )
 
 private const val PROMPT_NONE = "none"
+private const val PROMPT_START_TIMER = "start_timer"
 private const val PROMPT_LEAVE_EARLY = "leave_early"
 private const val PROMPT_TIME_UP = "time_up"
 
@@ -111,11 +118,16 @@ private fun readWatchState(c: Context): WatchState {
         hasPlace = p.getBoolean("has_place", false),
         placeLabel = p.getString("place_label", "") ?: "",
         armed = p.getBoolean("armed", false),
+        needsSetup = p.getBoolean("needs_setup", false),
+        monitoringError = p.getString("monitoring_error", "") ?: "",
         timerEnd = p.getLong("timer_end", 0L),
         timerStartedAt = p.getLong("timer_started_at", 0L),
         durationMinutes = p.getInt("duration_min", 270),
         prompt = p.getString("prompt", PROMPT_NONE) ?: PROMPT_NONE,
         promptUpdated = p.getLong("prompt_updated", 0L),
+        placeCount = p.getInt("place_count", 0),
+        armedPlaceCount = p.getInt("armed_place_count", 0),
+        registeredPlaceCount = p.getInt("registered_place_count", 0),
         lastUpdated = p.getLong("updated", 0L),
     )
 }
@@ -125,11 +137,16 @@ private fun persistDataMap(c: Context, map: DataMap) {
         .putBoolean("has_place", map.getBoolean("has_place", false))
         .putString("place_label", map.getString("place_label", ""))
         .putBoolean("armed", map.getBoolean("armed", false))
+        .putBoolean("needs_setup", map.getBoolean("needs_setup", false))
+        .putString("monitoring_error", map.getString("monitoring_error", ""))
         .putLong("timer_end", map.getLong("end", 0L))
         .putLong("timer_started_at", map.getLong("started_at", 0L))
         .putInt("duration_min", map.getInt("duration_min", 270))
         .putString("prompt", map.getString("prompt", PROMPT_NONE))
         .putLong("prompt_updated", map.getLong("prompt_updated", 0L))
+        .putInt("place_count", map.getInt("place_count", 0))
+        .putInt("armed_place_count", map.getInt("armed_place_count", 0))
+        .putInt("registered_place_count", map.getInt("registered_place_count", 0))
         .putLong("updated", map.getLong("updated", System.currentTimeMillis()))
         .apply()
 }
@@ -150,6 +167,12 @@ private suspend fun sendPhoneCommand(
     }
     true
 }.getOrDefault(false)
+
+internal fun promptCommandPayload(promptUpdated: Long): String =
+    promptUpdated.toString()
+
+private fun promptCommandPayload(state: WatchState): String =
+    promptCommandPayload(state.promptUpdated)
 
 @Composable
 fun WatchScreen() {
@@ -209,15 +232,48 @@ fun WatchScreen() {
         }
     }
 
-    fun keepTimer() {
-        showFeedback("Keeping timer...")
+    fun startArrivalTimer() {
+        showFeedback("Starting...")
+        scope.launch {
+            val sent = sendPhoneCommand(context, "/dwell/start", promptCommandPayload(state))
+            showFeedback(if (sent) "Started" else "Phone not nearby")
+            if (sent) {
+                val nowMs = System.currentTimeMillis()
+                prefs(context).edit()
+                    .putString("prompt", PROMPT_NONE)
+                    .putLong("prompt_updated", nowMs)
+                    .putLong("timer_started_at", nowMs)
+                    .putLong("timer_end", nowMs + state.durationMinutes * 60_000L)
+                    .apply()
+                state = readWatchState(context)
+            }
+        }
+    }
+
+    fun dismissArrival() {
+        showFeedback("Not now")
+        val payload = promptCommandPayload(state)
         prefs(context).edit()
             .putString("prompt", PROMPT_NONE)
             .putLong("prompt_updated", System.currentTimeMillis())
             .apply()
         state = readWatchState(context)
         scope.launch {
-            val sent = sendPhoneCommand(context, "/dwell/keep")
+            val sent = sendPhoneCommand(context, "/dwell/dismiss_arrival", payload)
+            showFeedback(if (sent) "Dismissed" else "Dismissed locally")
+        }
+    }
+
+    fun keepTimer() {
+        showFeedback("Keeping timer...")
+        val payload = promptCommandPayload(state)
+        prefs(context).edit()
+            .putString("prompt", PROMPT_NONE)
+            .putLong("prompt_updated", System.currentTimeMillis())
+            .apply()
+        state = readWatchState(context)
+        scope.launch {
+            val sent = sendPhoneCommand(context, "/dwell/keep", payload)
             showFeedback(if (sent) "Keeping timer" else "Still counting down")
         }
     }
@@ -225,7 +281,7 @@ fun WatchScreen() {
     fun markDone() {
         showFeedback("Marking done...")
         scope.launch {
-            val sent = sendPhoneCommand(context, "/dwell/done")
+            val sent = sendPhoneCommand(context, "/dwell/done", promptCommandPayload(state))
             showFeedback(if (sent) "Done" else "Phone not nearby")
             if (sent) {
                 prefs(context).edit()
@@ -259,6 +315,7 @@ fun WatchScreen() {
 
     val running = state.timerEnd > now
     val finishedLocally = state.timerEnd > 0L && state.timerEnd <= now
+    val startPrompt = state.prompt == PROMPT_START_TIMER
     val leavingEarly = state.prompt == PROMPT_LEAVE_EARLY && running
     val timeUp = state.prompt == PROMPT_TIME_UP || finishedLocally
 
@@ -266,8 +323,8 @@ fun WatchScreen() {
         scope.launch { pagerState.animateScrollToPage(WatchPage.Glance.ordinal) }
     }
 
-    LaunchedEffect(running, leavingEarly, timeUp) {
-        if (!running || leavingEarly || timeUp) {
+    LaunchedEffect(running, startPrompt, leavingEarly, timeUp) {
+        if (!running || startPrompt || leavingEarly || timeUp) {
             pagerState.scrollToPage(WatchPage.Glance.ordinal)
         }
     }
@@ -278,10 +335,21 @@ fun WatchScreen() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .background(MaterialTheme.colors.background)
+                .padding(
+                    horizontal = if (currentPage == WatchPage.Focus) 4.dp else 14.dp,
+                    vertical = if (currentPage == WatchPage.Focus) 4.dp else 12.dp,
+                ),
             contentAlignment = Alignment.Center,
         ) {
             when {
+                startPrompt -> StartTimerPromptContent(
+                    state = state,
+                    switching = running,
+                    feedback = feedback,
+                    onStart = { startArrivalTimer() },
+                    onDismiss = { dismissArrival() },
+                )
                 leavingEarly -> LeavingEarlyContent(
                     state = state,
                     feedback = feedback,
@@ -304,6 +372,7 @@ fun WatchScreen() {
                             state = state,
                             now = now,
                             feedback = feedback,
+                            onExtend = { extendTimer(30) },
                             onOpenFocus = {
                                 scope.launch { pagerState.animateScrollToPage(WatchPage.Focus.ordinal) }
                             },
@@ -340,46 +409,114 @@ fun WatchScreen() {
 }
 
 @Composable
+private fun StartTimerPromptContent(
+    state: WatchState,
+    switching: Boolean,
+    feedback: String,
+    onStart: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        StatusDot(active = true)
+        Spacer(Modifier.height(10.dp))
+        Text(
+            if (switching) "Switch timer?" else "Start timer?",
+            style = MaterialTheme.typography.title2,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            state.placeLabel.shortPlace().ifBlank { "Arrived" },
+            style = MaterialTheme.typography.caption1,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.72f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
+        StatusText(feedback.ifBlank { "${formatDurationMinutes(state.durationMinutes)} default" })
+        Spacer(Modifier.height(10.dp))
+        MiniPill(
+            label = if (switching) "Switch timer" else "Start timer",
+            onClick = onStart,
+            modifier = Modifier.fillMaxWidth(),
+            important = true,
+        )
+        Spacer(Modifier.height(6.dp))
+        MiniPill(
+            label = "Not now",
+            onClick = onDismiss,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
 private fun ActiveGlanceContent(
     state: WatchState,
     now: Long,
     feedback: String,
+    onExtend: () -> Unit,
     onOpenFocus: () -> Unit,
     onOpenActions: () -> Unit,
 ) {
     val left = (state.timerEnd - now).coerceAtLeast(0L)
-    val total = totalTimerMillis(state)
-    val progress = if (total > 0L) left.toFloat() / total.toFloat() else 0f
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        TimerRing(
-            progress = progress.coerceIn(0f, 1f),
-            primary = formatRemaining(left),
-            secondary = state.placeLabel.ifBlank { "Dwell" },
-            modifier = Modifier.size(118.dp),
-            onClick = onOpenFocus,
+        StatusDot(active = true)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Timer active",
+            style = MaterialTheme.typography.title2,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(7.dp))
+        Text(
+            state.placeLabel.shortPlace(),
+            style = MaterialTheme.typography.caption1,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.72f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            formatRemaining(left),
+            fontSize = 34.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
         Text(
             "Ends ${formatTime(state.timerEnd)}",
             style = MaterialTheme.typography.caption2,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.72f),
             maxLines = 1,
         )
-        if (feedback.isNotBlank()) {
-            StatusText(feedback)
-        }
-        Spacer(Modifier.height(8.dp))
+        StatusText(
+            feedback.ifBlank {
+                WatchSyncCopy.syncText(
+                    lastUpdated = state.lastUpdated,
+                    now = now,
+                    activeTimer = true,
+                )
+            },
+        )
+        Spacer(Modifier.height(7.dp))
         PageDots(current = 0, total = 3)
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(7.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-            MiniPill("Timer", onOpenFocus, Modifier.weight(1f))
+            MiniPill("+30m", onExtend, Modifier.weight(1f), important = true)
             MiniPill("Actions", onOpenActions, Modifier.weight(1f))
         }
+        Spacer(Modifier.height(5.dp))
+        MiniPill("Timer face", onOpenFocus, Modifier.fillMaxWidth())
     }
 }
 
@@ -393,24 +530,25 @@ private fun FocusTimerContent(
     val total = totalTimerMillis(state)
     val progress = if (total > 0L) left.toFloat() / total.toFloat() else 0f
 
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
     ) {
         BigTimerFace(
             progress = progress.coerceIn(0f, 1f),
             primary = formatRemaining(left),
-            secondary = "Ends ${formatTime(state.timerEnd)}",
-        )
-        Spacer(Modifier.height(7.dp))
-        PageDots(current = 1, total = 3)
-        Spacer(Modifier.height(7.dp))
-        MiniPill(
-            label = "Actions",
+            place = state.placeLabel.ifBlank { "Dwell" },
+            footer = "Ends ${formatTime(state.timerEnd)}",
+            modifier = Modifier.fillMaxSize(),
             onClick = onOpenActions,
-            modifier = Modifier.fillMaxWidth(),
         )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 8.dp),
+        ) {
+            PageDots(current = 1, total = 3)
+        }
     }
 }
 
@@ -429,7 +567,7 @@ private fun TimerActionsContent(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("Actions", style = MaterialTheme.typography.title2, fontWeight = FontWeight.Bold)
+        Text("Extend", style = MaterialTheme.typography.title2, fontWeight = FontWeight.Bold)
         Text(
             state.placeLabel.ifBlank { "Dwell timer" },
             style = MaterialTheme.typography.caption2,
@@ -441,14 +579,14 @@ private fun TimerActionsContent(
         StatusText(feedback.ifBlank { "Ends ${formatTime(state.timerEnd)}" })
         Spacer(Modifier.height(8.dp))
         ExtendRow(onExtend = onExtend)
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(8.dp))
+        PageDots(current = 2, total = 3)
+        Spacer(Modifier.height(8.dp))
         MiniPill(
             label = "Cancel timer",
             onClick = onCancel,
             modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(Modifier.height(8.dp))
-        PageDots(current = 2, total = 3)
         Spacer(Modifier.height(6.dp))
         MiniPill(
             label = "Timer",
@@ -492,6 +630,7 @@ private fun LeavingEarlyContent(
             label = "Keep timer",
             onClick = onKeep,
             modifier = Modifier.fillMaxWidth(),
+            important = true,
         )
         Spacer(Modifier.height(6.dp))
         MiniPill(
@@ -531,12 +670,14 @@ private fun TimeUpContent(
             label = "Extend 30m",
             onClick = { onExtend(30) },
             modifier = Modifier.fillMaxWidth(),
+            important = true,
         )
         Spacer(Modifier.height(6.dp))
         MiniPill(
             label = "Done",
             onClick = onDone,
             modifier = Modifier.fillMaxWidth(),
+            important = true,
         )
     }
 }
@@ -548,11 +689,13 @@ private fun ReadyContent(
     feedback: String,
 ) {
     val title = when {
+        state.needsSetup -> "Setup needed"
         state.armed -> "Ready"
         state.hasPlace -> "Setup paused"
         else -> "Setup needed"
     }
     val detail = when {
+        state.needsSetup -> "Open phone app"
         state.armed -> "Waiting for arrival"
         state.hasPlace -> "Arm it on your phone"
         else -> "Choose a place on phone"
@@ -563,7 +706,7 @@ private fun ReadyContent(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        StatusDot(active = state.armed)
+        StatusDot(active = state.armed && !state.needsSetup)
         Spacer(Modifier.height(10.dp))
         Text(title, style = MaterialTheme.typography.title2, fontWeight = FontWeight.Bold)
         Text(
@@ -582,12 +725,23 @@ private fun ReadyContent(
                 textAlign = TextAlign.Center,
             )
             Text(
-                "${formatDurationMinutes(state.durationMinutes)} default",
+                readyMetaText(state),
                 style = MaterialTheme.typography.caption2,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
             )
         }
-        StatusText(feedback.ifBlank { syncText(state.lastUpdated, now) })
+        StatusText(
+            feedback.ifBlank {
+                WatchSyncCopy.syncText(
+                    lastUpdated = state.lastUpdated,
+                    now = now,
+                    activeTimer = false,
+                )
+            },
+        )
     }
 }
 
@@ -645,14 +799,19 @@ private fun TimerRing(
 private fun BigTimerFace(
     progress: Float,
     primary: String,
-    secondary: String,
+    place: String,
+    footer: String,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
     val active = MaterialTheme.colors.primary
     val track = MaterialTheme.colors.onSurface.copy(alpha = 0.14f)
+    val faceModifier = if (onClick == null) modifier else modifier.clickable(onClick = onClick)
 
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(154.dp)) {
+    BoxWithConstraints(contentAlignment = Alignment.Center, modifier = faceModifier) {
+        val ringSize = (minOf(maxWidth, maxHeight) - 10.dp).coerceAtLeast(148.dp)
         Canvas(Modifier.fillMaxSize()) {
-            val strokeWidth = 8.dp.toPx()
+            val strokeWidth = 9.dp.toPx()
             drawCircle(
                 color = track,
                 style = Stroke(width = strokeWidth),
@@ -668,18 +827,28 @@ private fun BigTimerFace(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(horizontal = 20.dp),
+            modifier = Modifier
+                .size(ringSize)
+                .padding(horizontal = 22.dp),
         ) {
             Text(
                 primary,
-                fontSize = 42.sp,
+                fontSize = 44.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
             )
             Text(
-                secondary,
+                place.shortPlace(),
+                style = MaterialTheme.typography.caption1,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.76f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                footer,
                 style = MaterialTheme.typography.caption2,
-                color = MaterialTheme.colors.onSurface.copy(alpha = 0.68f),
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.58f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
@@ -719,6 +888,7 @@ private fun ExtendRow(onExtend: (Int) -> Unit) {
                 label = "+${minutes}m",
                 onClick = { onExtend(minutes) },
                 modifier = Modifier.weight(1f),
+                important = minutes == 30,
             )
         }
     }
@@ -729,16 +899,27 @@ private fun MiniPill(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    important: Boolean = false,
 ) {
     Box(
         modifier = modifier
-            .height(32.dp)
+            .height(34.dp)
             .clip(CircleShape)
-            .background(MaterialTheme.colors.surface)
+            .background(
+                if (important) MaterialTheme.colors.primary
+                else MaterialTheme.colors.surface,
+            )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, style = MaterialTheme.typography.caption1, fontWeight = FontWeight.Bold)
+        Text(
+            label,
+            style = MaterialTheme.typography.caption1,
+            fontWeight = FontWeight.Bold,
+            color = if (important) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -799,18 +980,17 @@ private fun formatDurationMinutes(minutes: Int): String {
     }
 }
 
+private fun readyMetaText(state: WatchState): String =
+    when {
+        state.needsSetup && state.monitoringError.isNotBlank() -> state.monitoringError
+        state.needsSetup -> "Monitoring not live"
+        state.registeredPlaceCount > 1 -> "${state.registeredPlaceCount} places live"
+        state.armedPlaceCount > 1 -> "${state.armedPlaceCount} places armed"
+        else -> "${formatDurationMinutes(state.durationMinutes)} default"
+    }
+
 private fun formatTime(timeMillis: Long): String =
     DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(timeMillis))
-
-private fun syncText(lastUpdated: Long, now: Long): String {
-    if (lastUpdated <= 0L) return "No phone sync yet"
-    val ageMinutes = ((now - lastUpdated) / 60_000L).coerceAtLeast(0)
-    return if (ageMinutes < 2) {
-        "Synced just now"
-    } else {
-        "Synced ${formatTime(lastUpdated)}"
-    }
-}
 
 private fun String.shortPlace(): String =
     ifBlank { "this place" }

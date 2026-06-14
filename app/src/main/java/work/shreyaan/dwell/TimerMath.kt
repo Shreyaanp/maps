@@ -5,8 +5,20 @@ import kotlin.math.max
 object TimerMath {
     private const val MINUTE_MS = 60_000L
 
+    fun normalizedDurationMinutes(durationMinutes: Int): Int =
+        durationMinutes.coerceIn(
+            DwellPlace.MIN_DURATION_MINUTES,
+            DwellPlace.MAX_DURATION_MINUTES,
+        )
+
+    fun completionDurationMinutes(
+        timerPlaceDurationMinutes: Int?,
+        fallbackDurationMinutes: Int,
+    ): Int =
+        normalizedDurationMinutes(timerPlaceDurationMinutes ?: fallbackDurationMinutes)
+
     fun endFromDuration(nowMillis: Long, durationMinutes: Int): Long =
-        nowMillis + durationMinutes.coerceAtLeast(1) * MINUTE_MS
+        nowMillis + normalizedDurationMinutes(durationMinutes) * MINUTE_MS
 
     fun extendedEnd(
         nowMillis: Long,

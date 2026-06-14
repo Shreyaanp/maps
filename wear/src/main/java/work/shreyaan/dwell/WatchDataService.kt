@@ -47,16 +47,27 @@ class WatchDataService : WearableListenerService() {
             .putBoolean("has_place", map.getBoolean("has_place", false))
             .putString("place_label", map.getString("place_label", ""))
             .putBoolean("armed", map.getBoolean("armed", false))
+            .putBoolean("needs_setup", map.getBoolean("needs_setup", false))
+            .putString("monitoring_error", map.getString("monitoring_error", ""))
             .putLong("timer_end", nextEnd)
             .putLong("timer_started_at", map.getLong("started_at", 0L))
             .putInt("duration_min", map.getInt("duration_min", 270))
             .putString("prompt", prompt)
             .putLong("prompt_updated", promptUpdated)
+            .putInt("place_count", map.getInt("place_count", 0))
+            .putInt("armed_place_count", map.getInt("armed_place_count", 0))
+            .putInt("registered_place_count", map.getInt("registered_place_count", 0))
             .putLong("updated", map.getLong("updated", System.currentTimeMillis()))
             .apply()
 
         val alert = prompt != previousPrompt || promptUpdated != previousPromptUpdated
-        if (prompt == "leave_early" && nextEnd > now) {
+        if (prompt == "start_timer" && nextEnd <= now) {
+            WatchNotifications.showArrivalQuestion(
+                this,
+                placeLabel = map.getString("place_label", ""),
+                alert = alert,
+            )
+        } else if (prompt == "leave_early" && nextEnd > now) {
             WatchNotifications.showLeavingEarly(
                 this,
                 placeLabel = map.getString("place_label", ""),

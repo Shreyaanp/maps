@@ -15,7 +15,7 @@ class GeofenceMapBoundsTest {
         val minimum = GeofenceMapBounds.forCircle(
             latitude = 18.5204,
             longitude = 73.8567,
-            radiusMeters = 50f,
+            radiusMeters = DwellRadius.MIN_METERS,
         )
 
         assertEquals(minimum, tiny)

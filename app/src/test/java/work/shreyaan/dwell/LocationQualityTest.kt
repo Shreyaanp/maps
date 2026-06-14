@@ -32,6 +32,30 @@ class LocationQualityTest {
     }
 
     @Test
+    fun acceptsMockLocationOnlyWhenExplicitlyAllowed() {
+        assertTrue(
+            LocationQuality.isUsable(
+                latitude = 18.5204,
+                longitude = 73.8567,
+                ageMs = 5_000L,
+                accuracyMeters = 24f,
+                isMock = true,
+                allowMock = true,
+            )
+        )
+        assertTrue(
+            LocationQuality.isImmediate(
+                latitude = 18.5204,
+                longitude = 73.8567,
+                ageMs = 5_000L,
+                accuracyMeters = 24f,
+                isMock = true,
+                allowMock = true,
+            )
+        )
+    }
+
+    @Test
     fun rejectsStaleLocation() {
         assertFalse(
             LocationQuality.isUsable(

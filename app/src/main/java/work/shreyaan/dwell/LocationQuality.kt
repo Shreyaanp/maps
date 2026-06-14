@@ -12,8 +12,9 @@ object LocationQuality {
         ageMs: Long,
         accuracyMeters: Float,
         isMock: Boolean,
+        allowMock: Boolean = false,
     ): Boolean =
-        !isMock &&
+        (!isMock || allowMock) &&
             latitude.isFinite() &&
             longitude.isFinite() &&
             latitude in -90.0..90.0 &&
@@ -29,6 +30,7 @@ object LocationQuality {
         ageMs: Long,
         accuracyMeters: Float,
         isMock: Boolean,
+        allowMock: Boolean = false,
     ): Boolean =
         isUsable(
             latitude = latitude,
@@ -36,6 +38,7 @@ object LocationQuality {
             ageMs = ageMs,
             accuracyMeters = accuracyMeters,
             isMock = isMock,
+            allowMock = allowMock,
         ) &&
             ageMs <= MAX_IMMEDIATE_AGE_MS &&
             accuracyMeters <= MAX_IMMEDIATE_ACCURACY_METERS

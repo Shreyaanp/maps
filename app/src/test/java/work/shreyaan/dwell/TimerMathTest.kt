@@ -14,6 +14,51 @@ class TimerMathTest {
     }
 
     @Test
+    fun endFromDurationClampsToMaxDuration() {
+        assertEquals(173_800_000L, TimerMath.endFromDuration(1_000_000L, 99_999))
+    }
+
+    @Test
+    fun completionDurationPrefersTimerPlaceDuration() {
+        assertEquals(
+            90,
+            TimerMath.completionDurationMinutes(
+                timerPlaceDurationMinutes = 90,
+                fallbackDurationMinutes = 270,
+            ),
+        )
+    }
+
+    @Test
+    fun completionDurationFallsBackWhenTimerPlaceIsMissing() {
+        assertEquals(
+            270,
+            TimerMath.completionDurationMinutes(
+                timerPlaceDurationMinutes = null,
+                fallbackDurationMinutes = 270,
+            ),
+        )
+    }
+
+    @Test
+    fun completionDurationIsClamped() {
+        assertEquals(
+            DwellPlace.MIN_DURATION_MINUTES,
+            TimerMath.completionDurationMinutes(
+                timerPlaceDurationMinutes = 0,
+                fallbackDurationMinutes = 270,
+            ),
+        )
+        assertEquals(
+            DwellPlace.MAX_DURATION_MINUTES,
+            TimerMath.completionDurationMinutes(
+                timerPlaceDurationMinutes = 99_999,
+                fallbackDurationMinutes = 270,
+            ),
+        )
+    }
+
+    @Test
     fun extendedEndUsesExistingEndWhenTimerIsActive() {
         assertEquals(
             4_600_000L,

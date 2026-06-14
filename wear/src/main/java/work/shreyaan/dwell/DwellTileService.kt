@@ -171,6 +171,8 @@ private fun tileState(context: Context): TileState {
     val hasPlace = p.getBoolean("has_place", false)
     val place = p.getString("place_label", "").orEmpty()
     val armed = p.getBoolean("armed", false)
+    val needsSetup = p.getBoolean("needs_setup", false)
+    val registeredPlaceCount = p.getInt("registered_place_count", 0)
     val timerEnd = p.getLong("timer_end", 0L)
     val prompt = p.getString("prompt", TileStateCalculator.PROMPT_NONE)
         ?: TileStateCalculator.PROMPT_NONE
@@ -180,6 +182,8 @@ private fun tileState(context: Context): TileState {
         hasPlace = hasPlace,
         placeLabel = place,
         armed = armed,
+        needsSetup = needsSetup,
+        registeredPlaceCount = registeredPlaceCount,
         timerEnd = timerEnd,
         prompt = prompt,
         now = now,

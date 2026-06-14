@@ -107,6 +107,35 @@ object WatchNotifications {
         if (alert) vibratePrompt(c)
     }
 
+    fun showArrivalQuestion(
+        c: Context,
+        placeLabel: String,
+        alert: Boolean,
+    ) {
+        if (!canNotify(c)) return
+        ensureChannels(c)
+
+        val openApp = PendingIntent.getActivity(
+            c,
+            13,
+            Intent(c, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val label = placeLabel.ifBlank { "this place" }
+        val notification = Notification.Builder(c, CHANNEL_TIMER)
+            .setSmallIcon(R.drawable.ic_stat_timer)
+            .setContentTitle("Start timer?")
+            .setContentText("Dwell thinks you arrived at $label.")
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(!alert)
+            .setContentIntent(openApp)
+            .setCategory(Notification.CATEGORY_STATUS)
+            .build()
+
+        notificationManager(c).notify(NOTIF_TIMER, notification)
+        if (alert) vibratePrompt(c)
+    }
+
     fun showTimeUp(
         c: Context,
         placeLabel: String,

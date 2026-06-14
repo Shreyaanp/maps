@@ -14,10 +14,21 @@ object TimerController {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-    fun startTimer(c: Context, durationMinutes: Int) {
+    fun startTimer(
+        c: Context,
+        durationMinutes: Int,
+        placeId: String? = null,
+    ) {
+        val resolvedPlaceId = placeId
+            ?: Prefs.getPromptPlaceId(c).takeIf { it.isNotBlank() }
+            ?: Prefs.getActivePlace(c)?.id
         val now = System.currentTimeMillis()
         val end = TimerMath.endFromDuration(now, durationMinutes)
+        ArrivalProbeReceiver.cancel(c)
+        Prefs.clearArrivalRuntime(c)
         Prefs.clearWatchPrompt(c)
+        Prefs.setTimerPlaceId(c, resolvedPlaceId)
+        resolvedPlaceId?.takeIf { it.isNotBlank() }?.let { Prefs.setActivePlace(c, it) }
         Prefs.setTimerStartedAt(c, now)
         Prefs.setTimerEnd(c, end)
         scheduleAlarm(c, end)
@@ -29,15 +40,26 @@ object TimerController {
         val now = System.currentTimeMillis()
         val currentEnd = Prefs.getTimerEnd(c)
         val end = TimerMath.extendedEnd(now, currentEnd, extraMinutes)
+        ArrivalProbeReceiver.cancel(c)
+        Prefs.clearArrivalRuntime(c)
         if (Prefs.getTimerStartedAt(c) <= 0L) {
             Prefs.setTimerStartedAt(c, now)
         }
         Prefs.clearWatchPrompt(c)
+        if (Prefs.getTimerPlaceId(c).isBlank()) {
+            Prefs.setTimerPlaceId(c, Prefs.getActivePlace(c)?.id)
+        }
         Prefs.setTimerEnd(c, end)
         scheduleAlarm(c, end)
         Notifications.notifyTimerRunning(c, end)
         WearSync.pushState(c)
     }
+
+    fun completionDurationMinutes(c: Context): Int =
+        TimerMath.completionDurationMinutes(
+            timerPlaceDurationMinutes = Prefs.getPlace(c, Prefs.getTimerPlaceId(c))?.durationMinutes,
+            fallbackDurationMinutes = Prefs.getDurationMinutes(c),
+        )
 
     fun scheduleAlarm(c: Context, end: Long) {
         val am = c.getSystemService(AlarmManager::class.java)
@@ -53,16 +75,22 @@ object TimerController {
 
     fun cancelTimer(c: Context) {
         c.getSystemService(AlarmManager::class.java).cancel(alarmIntent(c))
+        ArrivalProbeReceiver.cancel(c)
+        Prefs.clearArrivalRuntime(c)
         Prefs.clearWatchPrompt(c)
         Prefs.setTimerEnd(c, 0L)
         Prefs.setTimerStartedAt(c, 0L)
+        Prefs.setTimerPlaceId(c, null)
         WearSync.pushState(c)
     }
 
     fun clearCompletedTimer(c: Context) {
         c.getSystemService(AlarmManager::class.java).cancel(alarmIntent(c))
+        ArrivalProbeReceiver.cancel(c)
+        Prefs.clearArrivalRuntime(c)
         Prefs.setTimerEnd(c, 0L)
         Prefs.setTimerStartedAt(c, 0L)
+        Prefs.setTimerPlaceId(c, null)
         WearSync.pushState(c)
     }
 

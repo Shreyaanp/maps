@@ -1,6 +1,7 @@
 sdk.dir=/path/to/Android/sdk
 
 # Google OAuth client ID used as the ID-token audience by the app and backend.
+# Use the Web application OAuth client ID here, not an Android OAuth client ID.
 # Keep this value identical in Vercel as GOOGLE_SERVER_CLIENT_ID.
-GOOGLE_SERVER_CLIENT_ID=864034148738-m1fobhin2bkejsf5uga39i382rocdu5l.apps.googleusercontent.com
+GOOGLE_SERVER_CLIENT_ID=<web-client-id>.apps.googleusercontent.com
 DWELL_API_BASE_URL=https://dwell.shreyaan.work

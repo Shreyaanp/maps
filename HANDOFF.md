@@ -2,6 +2,13 @@
 
 Complete state of the project as of 2026-06-12, for whoever picks it up next.
 
+> Current note: this handoff is a historical snapshot. The current app has moved
+> beyond this state: phone maps now use MapLibre/OpenFreeMap, the phone app has
+> Google/local auth and backend sync hooks, saved places can be multiple, the
+> detection engine uses geofencing + activity recognition + confidence scoring,
+> and the Wear OS app has swipeable screens plus a Tile. Use `README.md` and
+> `FIELD_TEST.md` as the current validation references.
+
 ## What Dwell is
 
 An Android phone app **+** Wear OS watch app. You pin a place on a map; when you

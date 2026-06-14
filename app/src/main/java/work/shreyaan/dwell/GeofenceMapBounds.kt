@@ -17,8 +17,6 @@ object GeofenceMapBounds {
     private const val MAX_MAP_LATITUDE = 85.0
     private const val MIN_MAP_LONGITUDE = -180.0
     private const val MAX_MAP_LONGITUDE = 180.0
-    private const val MIN_RADIUS_METERS = 50f
-    private const val MAX_RADIUS_METERS = 500f
     private const val PADDING_SCALE = 1.45
     private const val MIN_LONGITUDE_SCALE = 0.25
 
@@ -27,9 +25,7 @@ object GeofenceMapBounds {
         longitude: Double,
         radiusMeters: Float,
     ): GeoBounds {
-        val paddedRadius = radiusMeters
-            .coerceIn(MIN_RADIUS_METERS, MAX_RADIUS_METERS)
-            .toDouble() * PADDING_SCALE
+        val paddedRadius = DwellRadius.normalize(radiusMeters).toDouble() * PADDING_SCALE
         val latDelta = paddedRadius / METERS_PER_DEGREE
         val centerLatitude = latitude
             .takeIf { it.isFinite() }

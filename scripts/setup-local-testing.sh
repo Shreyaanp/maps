@@ -50,6 +50,26 @@ current_user() {
   adb_shell "$1" am get-current-user | tr -d '\r'
 }
 
+device_sdk() {
+  adb_shell "$1" getprop ro.build.version.sdk | tr -d '\r'
+}
+
+phone_permissions_for_sdk() {
+  local sdk="$1"
+
+  echo android.permission.ACCESS_FINE_LOCATION
+  echo android.permission.ACCESS_COARSE_LOCATION
+
+  if (( sdk >= 29 )); then
+    echo android.permission.ACCESS_BACKGROUND_LOCATION
+    echo android.permission.ACTIVITY_RECOGNITION
+  fi
+
+  if (( sdk >= 33 )); then
+    echo android.permission.POST_NOTIFICATIONS
+  fi
+}
+
 package_installed_for_user() {
   local serial="$1"
   local user="$2"
@@ -104,19 +124,15 @@ runtime_permission_granted() {
 missing_phone_permissions() {
   local serial="$1"
   local user="$2"
+  local sdk="$3"
   local missing=0
   local perm
-  for perm in \
-    android.permission.ACCESS_FINE_LOCATION \
-    android.permission.ACCESS_COARSE_LOCATION \
-    android.permission.POST_NOTIFICATIONS \
-    android.permission.ACCESS_BACKGROUND_LOCATION
-  do
+  while IFS= read -r perm; do
     if ! runtime_permission_granted "$serial" "$user" "$perm"; then
       echo "$perm"
       missing=1
     fi
-  done
+  done < <(phone_permissions_for_sdk "$sdk")
   return "$missing"
 }
 
@@ -133,7 +149,7 @@ permission_summary() {
   local user="$2"
   adb_shell "$serial" dumpsys package "$PKG" |
     sed -n "/User $user:/,/User /p" |
-    rg "installed=|POST_NOTIFICATIONS|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|ACCESS_BACKGROUND_LOCATION|granted=" || true
+    rg "installed=|POST_NOTIFICATIONS|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|ACCESS_BACKGROUND_LOCATION|ACTIVITY_RECOGNITION|granted=" || true
 }
 
 launch_and_scan() {
@@ -161,7 +177,8 @@ launch_and_scan() {
 detect_devices
 
 PHONE_USER="$(current_user "$PHONE_SERIAL")"
-echo "Phone: $PHONE_SERIAL user $PHONE_USER"
+PHONE_SDK="$(device_sdk "$PHONE_SERIAL")"
+echo "Phone: $PHONE_SERIAL user $PHONE_USER sdk $PHONE_SDK"
 echo "Watch: $WATCH_SERIAL"
 
 echo
@@ -176,23 +193,22 @@ ensure_installed_for_user "$WATCH_SERIAL" 0
 
 echo
 echo "Granting permissions where the device allows ADB grants..."
-grant_or_note "$PHONE_SERIAL" "$PHONE_USER" android.permission.ACCESS_FINE_LOCATION || true
-grant_or_note "$PHONE_SERIAL" "$PHONE_USER" android.permission.ACCESS_COARSE_LOCATION || true
-grant_or_note "$PHONE_SERIAL" "$PHONE_USER" android.permission.POST_NOTIFICATIONS || true
-grant_or_note "$PHONE_SERIAL" "$PHONE_USER" android.permission.ACCESS_BACKGROUND_LOCATION || true
+while IFS= read -r perm; do
+  grant_or_note "$PHONE_SERIAL" "$PHONE_USER" "$perm" || true
+done < <(phone_permissions_for_sdk "$PHONE_SDK")
 grant_or_note "$WATCH_SERIAL" 0 android.permission.POST_NOTIFICATIONS || true
 
 echo
 echo "Phone permissions:"
 permission_summary "$PHONE_SERIAL" "$PHONE_USER"
 
-MISSING_PHONE_PERMISSIONS="$(missing_phone_permissions "$PHONE_SERIAL" "$PHONE_USER" || true)"
+MISSING_PHONE_PERMISSIONS="$(missing_phone_permissions "$PHONE_SERIAL" "$PHONE_USER" "$PHONE_SDK" || true)"
 if [[ -n "$MISSING_PHONE_PERMISSIONS" ]]; then
   echo
   echo "The phone still needs these permissions:"
   echo "$MISSING_PHONE_PERMISSIONS" | sed 's/^/  /'
   echo
-  echo "Set Permissions to allow Location all the time and Notifications, then rerun this script."
+  echo "Set Permissions to allow Location all the time, Physical activity, and Notifications, then rerun this script."
   open_app_settings "$PHONE_SERIAL" "$PHONE_USER"
   exit 2
 fi
@@ -204,3 +220,4 @@ launch_and_scan "$WATCH_SERIAL" "watch"
 
 echo
 echo "Ready for testing."
+echo "Next: open Dwell on the phone, clear diagnostics, monitor a place, lock the phone, and run FIELD_TEST.md."
