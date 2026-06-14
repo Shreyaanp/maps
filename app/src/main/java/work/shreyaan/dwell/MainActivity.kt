@@ -68,6 +68,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
@@ -510,6 +511,7 @@ private class ZoneOverlays {
 
 private enum class AppRoute {
     Home,
+    Insights,
     Settings,
     SavedZones,
 }
@@ -531,6 +533,7 @@ fun DwellScreen() {
     var authError by remember { mutableStateOf<String?>(null) }
     var permVersion by remember { mutableIntStateOf(0) }
     var diagnosticsRefresh by remember { mutableIntStateOf(0) }
+    var insightsRefresh by remember { mutableIntStateOf(0) }
     var locateAfterPermission by remember { mutableStateOf(false) }
     var locateAfterPermissionExpandDock by remember { mutableStateOf(true) }
     var centerAfterStartupPermission by remember { mutableStateOf(false) }
@@ -1763,6 +1766,7 @@ fun DwellScreen() {
             TimerController.cancelTimer(context)
             Notifications.notifyTimerCancelled(context)
             timerEnd = 0L
+            insightsRefresh += 1
             scope.launch {
                 BackendClient.trackEvent(context, "timer_cancelled")
             }
@@ -1978,6 +1982,7 @@ fun DwellScreen() {
                     if (timerActive) {
                         TimerController.cancelTimer(context)
                         Notifications.notifyTimerCancelled(context)
+                        insightsRefresh += 1
                     }
                     Notifications.clearAll(context)
                     Prefs.clearAppData(context, keepSession = true)
@@ -2006,6 +2011,7 @@ fun DwellScreen() {
                     if (timerActive) {
                         TimerController.cancelTimer(context)
                         Notifications.notifyTimerCancelled(context)
+                        insightsRefresh += 1
                     }
                     Notifications.clearAll(context)
                     Prefs.clearAppData(context, keepSession = false)
@@ -2124,6 +2130,7 @@ fun DwellScreen() {
                         TimerController.cancelTimer(context)
                         Notifications.notifyTimerCancelled(context)
                         timerEnd = 0L
+                        insightsRefresh += 1
                     }
                     if (place.monitoringEnabled) {
                         GeofenceManager.setPlaceMonitoring(context, place.id, false) { _, _ -> }
@@ -2141,6 +2148,16 @@ fun DwellScreen() {
                     toast("Saved place removed")
                 }
             },
+        )
+        AppRoute.Insights -> InsightsScreen(
+            summary = remember(insightsRefresh, now / 60_000L) {
+                DwellInsights.summaryFor(
+                    sessions = DwellInsights.loadSessions(context),
+                    nowMillis = now,
+                )
+            },
+            onBack = { route = AppRoute.Home },
+            onOpenPlaces = { route = AppRoute.SavedZones },
         )
         AppRoute.Home -> {
             Box(Modifier.fillMaxSize()) {
@@ -2220,6 +2237,11 @@ fun DwellScreen() {
                             closeSearchPanel()
                             homeDockExpanded = false
                             route = AppRoute.SavedZones
+                        },
+                        onInsights = {
+                            closeSearchPanel()
+                            homeDockExpanded = false
+                            route = AppRoute.Insights
                         },
                         onSettings = {
                             closeSearchPanel()
@@ -2676,6 +2698,7 @@ private fun MapActionRail(
     locating: Boolean,
     onCurrentLocation: () -> Unit,
     onSavedZones: () -> Unit,
+    onInsights: () -> Unit,
     onSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -2703,6 +2726,11 @@ private fun MapActionRail(
                 icon = Icons.Filled.Bookmark,
                 contentDescription = "Saved zones",
                 onClick = onSavedZones,
+            )
+            MapRailButton(
+                icon = Icons.Filled.Insights,
+                contentDescription = "Insights",
+                onClick = onInsights,
             )
             MapRailButton(
                 icon = Icons.Filled.Settings,
@@ -3950,6 +3978,295 @@ private fun SettingsScreen(
         )
     }
 }
+
+@Composable
+private fun InsightsScreen(
+    summary: DwellInsightsSummary,
+    onBack: () -> Unit,
+    onOpenPlaces: () -> Unit,
+) {
+    BackHandler {
+        onBack()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        ScreenHeader(
+            title = "Insights",
+            onBack = onBack,
+            trailing = {
+                IconButton(onClick = onOpenPlaces) {
+                    Icon(Icons.Filled.Bookmark, contentDescription = "Places")
+                }
+            },
+        )
+
+        if (summary.recentSessions.isEmpty()) {
+            EmptyState(
+                title = "No sessions yet",
+                detail = "Complete a place timer and Dwell will show weekly time, sessions, and place streaks here.",
+                actionLabel = "Open places",
+                onAction = onOpenPlaces,
+            )
+            return@Column
+        }
+
+        InsightHeroCard(summary)
+
+        summary.bestPlace?.let { best ->
+            DockNoticeStrip(
+                icon = Icons.Filled.Insights,
+                title = "Top place this week",
+                detail = "${formatInsightMinutes(best.weekMinutes)} at ${best.label} across ${best.completedSessionsThisWeek} ${sessionWord(best.completedSessionsThisWeek)}.",
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+
+        SettingsSection(title = "Place streaks") {
+            if (summary.placeInsights.isEmpty()) {
+                Text(
+                    "Completed timers will appear here.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                summary.placeInsights.forEachIndexed { index, place ->
+                    if (index > 0) HorizontalDivider()
+                    PlaceInsightRow(place)
+                }
+            }
+        }
+
+        SettingsSection(title = "Recent sessions") {
+            summary.recentSessions.forEachIndexed { index, session ->
+                if (index > 0) HorizontalDivider()
+                SessionHistoryRow(session)
+            }
+        }
+    }
+}
+
+@Composable
+private fun InsightHeroCard(summary: DwellInsightsSummary) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.primaryContainer,
+        tonalElevation = 3.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                ) {
+                    Icon(
+                        Icons.Filled.Insights,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .padding(10.dp)
+                            .size(22.dp),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "This week",
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        formatInsightMinutes(summary.weekMinutes),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                InsightStatTile(
+                    label = "Today",
+                    value = formatInsightMinutes(summary.todayMinutes),
+                    modifier = Modifier.weight(1f),
+                )
+                InsightStatTile(
+                    label = "Sessions",
+                    value = summary.completedSessionsThisWeek.toString(),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun InsightStatTile(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                label,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                value,
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlaceInsightRow(place: DwellPlaceInsight) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.70f),
+        ) {
+            Icon(
+                Icons.Filled.Place,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier
+                    .padding(8.dp)
+                    .size(18.dp),
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                place.label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "${place.completedSessionsThisWeek} ${sessionWord(place.completedSessionsThisWeek)} this week - latest ${formatInsightDate(place.latestSessionAtMillis)}",
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                formatInsightMinutes(place.weekMinutes),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            if (place.todayMinutes > 0) {
+                Text(
+                    "${formatInsightMinutes(place.todayMinutes)} today",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionHistoryRow(session: DwellSession) {
+    val completed = session.outcome == DwellSessionOutcome.Completed
+    val tone = if (completed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = tone.copy(alpha = 0.14f),
+        ) {
+            Icon(
+                if (completed) Icons.Filled.CheckCircle else Icons.Filled.Cancel,
+                contentDescription = null,
+                tint = tone,
+                modifier = Modifier
+                    .padding(8.dp)
+                    .size(18.dp),
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                session.placeLabel,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "${formatInsightDate(session.endedAtMillis)} - planned ${Notifications.formatDuration(session.plannedDurationMinutes)}",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                formatInsightMinutes(session.elapsedMinutes),
+                color = tone,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                if (completed) "Done" else "Cancelled",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+    }
+}
+
+private fun formatInsightMinutes(minutes: Int): String =
+    if (minutes <= 0) "0m" else Notifications.formatDuration(minutes)
+
+private fun formatInsightDate(millis: Long): String =
+    DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(millis))
+
+private fun sessionWord(count: Int): String =
+    if (count == 1) "session" else "sessions"
 
 @Composable
 private fun SavedZonesScreen(

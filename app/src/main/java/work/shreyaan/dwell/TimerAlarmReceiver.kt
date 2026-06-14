@@ -8,6 +8,7 @@ class TimerAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         Prefs.setWatchPrompt(context, Prefs.WATCH_PROMPT_TIME_UP)
         Prefs.clearArrivalRuntime(context)
+        DwellInsights.recordTimerFinished(context, DwellSessionOutcome.Completed)
         Prefs.setTimerEnd(context, 0L)
         Prefs.setTimerStartedAt(context, 0L)
         Notifications.notifyTimerDone(context, TimerController.completionDurationMinutes(context))

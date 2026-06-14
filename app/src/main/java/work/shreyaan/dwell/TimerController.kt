@@ -74,6 +74,9 @@ object TimerController {
     }
 
     fun cancelTimer(c: Context) {
+        if (TimerMath.isRunning(Prefs.getTimerEnd(c), System.currentTimeMillis())) {
+            DwellInsights.recordTimerFinished(c, DwellSessionOutcome.Cancelled)
+        }
         c.getSystemService(AlarmManager::class.java).cancel(alarmIntent(c))
         ArrivalProbeReceiver.cancel(c)
         Prefs.clearArrivalRuntime(c)
@@ -85,6 +88,9 @@ object TimerController {
     }
 
     fun clearCompletedTimer(c: Context) {
+        if (Prefs.getTimerEnd(c) > 0L && Prefs.getTimerEnd(c) <= System.currentTimeMillis()) {
+            DwellInsights.recordTimerFinished(c, DwellSessionOutcome.Completed)
+        }
         c.getSystemService(AlarmManager::class.java).cancel(alarmIntent(c))
         ArrivalProbeReceiver.cancel(c)
         Prefs.clearArrivalRuntime(c)

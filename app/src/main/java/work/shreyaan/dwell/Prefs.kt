@@ -234,6 +234,7 @@ object Prefs {
 
     fun clearPlace(c: Context) {
         clearArrivalRuntime(c)
+        DwellInsights.clear(c)
         p(c).edit()
             .remove(PLACES_KEY)
             .remove(ACTIVE_PLACE_ID_KEY)
@@ -646,6 +647,7 @@ object Prefs {
 
     fun clearAppData(c: Context, keepSession: Boolean) {
         clearArrivalRuntime(c)
+        DwellInsights.clear(c)
         p(c).edit()
             .remove(PLACES_KEY)
             .remove(ACTIVE_PLACE_ID_KEY)
