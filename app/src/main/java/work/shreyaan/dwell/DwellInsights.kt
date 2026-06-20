@@ -39,10 +39,16 @@ data class DwellPlaceInsight(
     val latestSessionAtMillis: Long,
 )
 
+data class DwellDayInsight(
+    val dayStartMillis: Long,
+    val minutes: Int,
+)
+
 data class DwellInsightsSummary(
     val todayMinutes: Int,
     val weekMinutes: Int,
     val completedSessionsThisWeek: Int,
+    val dayInsights: List<DwellDayInsight>,
     val placeInsights: List<DwellPlaceInsight>,
     val recentSessions: List<DwellSession>,
 ) {
@@ -118,14 +124,26 @@ object DwellInsights {
         zoneId: ZoneId = ZoneId.systemDefault(),
     ): DwellInsightsSummary {
         val todayStart = dayStartMillis(nowMillis, zoneId)
-        val weekStart = Instant.ofEpochMilli(todayStart)
-            .minus(6, ChronoUnit.DAYS)
-            .toEpochMilli()
+        val dayStarts = (6 downTo 0).map { offset ->
+            Instant.ofEpochMilli(todayStart)
+                .minus(offset.toLong(), ChronoUnit.DAYS)
+                .toEpochMilli()
+        }
+        val weekStart = dayStarts.first()
         val completed = sessions.filter {
             it.outcome == DwellSessionOutcome.Completed &&
                 it.endedAtMillis in weekStart..nowMillis
         }
         val today = completed.filter { it.endedAtMillis >= todayStart }
+        val dayInsights = dayStarts.mapIndexed { index, dayStart ->
+            val nextDayStart = dayStarts.getOrNull(index + 1) ?: Long.MAX_VALUE
+            DwellDayInsight(
+                dayStartMillis = dayStart,
+                minutes = completed
+                    .filter { it.endedAtMillis >= dayStart && it.endedAtMillis < nextDayStart }
+                    .sumOf { it.elapsedMinutes },
+            )
+        }
 
         val placeInsights = completed
             .groupBy { it.placeId }
@@ -152,6 +170,7 @@ object DwellInsights {
             todayMinutes = today.sumOf { it.elapsedMinutes },
             weekMinutes = completed.sumOf { it.elapsedMinutes },
             completedSessionsThisWeek = completed.size,
+            dayInsights = dayInsights,
             placeInsights = placeInsights,
             recentSessions = sessions.sortedByDescending { it.endedAtMillis }.take(8),
         )

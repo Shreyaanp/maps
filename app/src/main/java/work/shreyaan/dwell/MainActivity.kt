@@ -160,6 +160,7 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.text.DateFormat
+import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -4108,6 +4109,84 @@ private fun InsightHeroCard(summary: DwellInsightsSummary) {
                     modifier = Modifier.weight(1f),
                 )
             }
+
+            WeeklyDwellBars(summary.dayInsights)
+        }
+    }
+}
+
+@Composable
+private fun WeeklyDwellBars(dayInsights: List<DwellDayInsight>) {
+    val maxMinutes = dayInsights.maxOfOrNull { it.minutes }?.coerceAtLeast(1) ?: 1
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Last 7 days",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "completed timers",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                dayInsights.forEach { day ->
+                    val fraction = day.minutes.toFloat() / maxMinutes
+                    val barHeight = (14f + 54f * fraction.coerceIn(0f, 1f)).dp
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .height(68.dp)
+                                .width(14.dp),
+                            contentAlignment = Alignment.BottomCenter,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(14.dp)
+                                    .height(barHeight)
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(
+                                        if (day.minutes > 0) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        },
+                                    ),
+                            )
+                        }
+                        Text(
+                            dayLabel(day.dayStartMillis),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -4264,6 +4343,9 @@ private fun formatInsightMinutes(minutes: Int): String =
 
 private fun formatInsightDate(millis: Long): String =
     DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(millis))
+
+private fun dayLabel(millis: Long): String =
+    SimpleDateFormat("EEE", Locale.getDefault()).format(Date(millis))
 
 private fun sessionWord(count: Int): String =
     if (count == 1) "session" else "sessions"
