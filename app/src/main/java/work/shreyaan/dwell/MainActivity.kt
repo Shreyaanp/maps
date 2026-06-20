@@ -522,6 +522,28 @@ private enum class PlaceSelectionMode {
     EditSelected,
 }
 
+internal fun mapSearchPlaceholder(
+    hasPlace: Boolean,
+    editingSelectedPlace: Boolean,
+): String = when {
+    !hasPlace -> "Search place or address"
+    editingSelectedPlace -> "Search to move selected place"
+    else -> "Search places"
+}
+
+internal fun currentLocationActionSubtitle(
+    editingSelectedPlace: Boolean,
+    compact: Boolean = false,
+): String = when {
+    editingSelectedPlace && compact -> "Move selected place nearby"
+    editingSelectedPlace -> "Move selected place where you are now"
+    compact -> "Fastest way to create a nearby zone"
+    else -> "Drop a zone where you are now"
+}
+
+internal fun arrivalModeLabel(autoStart: Boolean): String =
+    if (autoStart) "Auto-start" else "Confirm first"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DwellScreen() {
@@ -642,7 +664,15 @@ fun DwellScreen() {
     var registeredPlaceIds by remember { mutableStateOf(Prefs.getRegisteredPlaceIds(context)) }
     var monitoringError by remember { mutableStateOf(Prefs.getMonitoringError(context)) }
     var selectedPlaceId by remember { mutableStateOf(Prefs.getActivePlace(context)?.id.orEmpty()) }
-    var placeSelectionMode by remember { mutableStateOf(PlaceSelectionMode.CreateNew) }
+    var placeSelectionMode by remember {
+        mutableStateOf(
+            if (Prefs.hasPlace(context)) {
+                PlaceSelectionMode.EditSelected
+            } else {
+                PlaceSelectionMode.CreateNew
+            }
+        )
+    }
     var pin by remember {
         mutableStateOf(
             if (Prefs.hasPlace(context))
@@ -668,8 +698,14 @@ fun DwellScreen() {
     var lastSearchAt by remember { mutableLongStateOf(0L) }
     val searchCache = remember { mutableMapOf<String, CachedLocationSearch>() }
     var radius by remember { mutableFloatStateOf(Prefs.getRadius(context)) }
+    var defaultRadius by remember { mutableFloatStateOf(Prefs.getDefaultRadius(context)) }
     var durationText by remember {
         val h = Prefs.getDurationMinutes(context) / 60.0
+        val rounded = formatHoursInput(h)
+        mutableStateOf(rounded.ifEmpty { "4.5" })
+    }
+    var defaultDurationText by remember {
+        val h = Prefs.getDefaultDurationMinutes(context) / 60.0
         val rounded = formatHoursInput(h)
         mutableStateOf(rounded.ifEmpty { "4.5" })
     }
@@ -686,6 +722,23 @@ fun DwellScreen() {
         durationText = formatHoursInput(place.durationMinutes / 60.0)
     }
 
+    fun beginCreatePlace() {
+        placeSelectionMode = PlaceSelectionMode.CreateNew
+        selectedPlaceId = ""
+        pin = null
+        selectedPlaceLabel = ""
+        radius = Prefs.getDefaultRadius(context)
+        durationText = formatHoursInput(Prefs.getDefaultDurationMinutes(context) / 60.0)
+    }
+
+    fun beginEditActivePlace(expandDock: Boolean = false): Boolean {
+        val active = Prefs.getActivePlace(context) ?: places.firstOrNull() ?: return false
+        placeSelectionMode = PlaceSelectionMode.EditSelected
+        applyActivePlace(active)
+        homeDockExpanded = expandDock
+        return true
+    }
+
     fun refreshPlaces(syncActivePlace: Boolean = false) {
         places = Prefs.getPlaces(context)
         registeredPlaceIds = Prefs.getRegisteredPlaceIds(context)
@@ -699,6 +752,7 @@ fun DwellScreen() {
                 selectedPlaceId = ""
                 pin = null
                 selectedPlaceLabel = ""
+                placeSelectionMode = PlaceSelectionMode.CreateNew
                 radius = Prefs.getRadius(context)
                 durationText = formatHoursInput(Prefs.getDurationMinutes(context) / 60.0)
             }
@@ -922,6 +976,20 @@ fun DwellScreen() {
         expandDock: Boolean = false,
         analyticsSource: String,
     ) {
+        val duplicatePlace = if (placeSelectionMode == PlaceSelectionMode.CreateNew) {
+            val candidate = DwellPlace.create(
+                label = label,
+                latitude = point.latitude,
+                longitude = point.longitude,
+                radiusMeters = radius,
+                durationMinutes = currentDurationMinutes(),
+            )
+            Prefs.getPlaces(context).firstOrNull {
+                DwellPlace.isDuplicateSavedPlace(it, candidate)
+            }
+        } else {
+            null
+        }
         val committedPlace = when (placeSelectionMode) {
             PlaceSelectionMode.CreateNew -> {
                 Prefs.createPlace(
@@ -956,7 +1024,10 @@ fun DwellScreen() {
         prewarmZoneMap(point)
         if (center) centerMapOn(point)
         homeDockExpanded = expandDock
-        syncSelectedZone(isArmed = false)
+        syncSelectedZone(isArmed = committedPlace.monitoringEnabled)
+        if (duplicatePlace != null && duplicatePlace.id == committedPlace.id) {
+            toast("${committedPlace.safeLabel} already exists - selected it")
+        }
         scope.launch {
             BackendClient.trackEvent(
                 context,
@@ -1536,9 +1607,6 @@ fun DwellScreen() {
             map.uiSettings.setCompassEnabled(false)
             map.uiSettings.setRotateGesturesEnabled(false)
             map.addOnMapLongClickListener { latLng ->
-                if (!homeDockExpanded) {
-                    placeSelectionMode = PlaceSelectionMode.CreateNew
-                }
                 selectGeofencePoint(
                     point = MapPoint(latLng.latitude, latLng.longitude),
                     label = "Dropped pin",
@@ -1877,7 +1945,11 @@ fun DwellScreen() {
     }
 
     fun openSearchOnMap(mode: PlaceSelectionMode = PlaceSelectionMode.CreateNew) {
-        placeSelectionMode = mode
+        if (mode == PlaceSelectionMode.CreateNew) {
+            beginCreatePlace()
+        } else {
+            beginEditActivePlace()
+        }
         route = AppRoute.Home
         homeDockExpanded = false
         searchPanelExpanded = true
@@ -1909,8 +1981,8 @@ fun DwellScreen() {
 
     when (route) {
         AppRoute.Settings -> SettingsScreen(
-            radius = radius,
-            durationText = durationText,
+            radius = defaultRadius,
+            durationText = defaultDurationText,
             accountProvider = Prefs.getAccountProvider(context),
             accountDisplayName = Prefs.getAccountDisplayName(context),
             accountEmail = Prefs.getAccountEmail(context),
@@ -1925,17 +1997,31 @@ fun DwellScreen() {
             },
             onBack = { route = AppRoute.Home },
             onRadiusChange = {
-                radius = it
+                defaultRadius = it
             },
             onRadiusChangeFinished = {
-                commitRadiusChange()
+                defaultRadius = DwellRadius.normalize(defaultRadius)
+                Prefs.setDefaultRadius(context, defaultRadius)
+                if (placeSelectionMode == PlaceSelectionMode.CreateNew || !Prefs.hasPlace(context)) {
+                    radius = defaultRadius
+                }
+                toast("Default radius updated")
             },
-            onDurationChange = { persistDurationText(it) },
+            onDurationChange = {
+                defaultDurationText = it
+                durationMinutesFromText(it)?.let { minutes ->
+                    Prefs.setDefaultDurationMinutes(context, minutes)
+                    if (placeSelectionMode == PlaceSelectionMode.CreateNew || !Prefs.hasPlace(context)) {
+                        durationText = defaultDurationText
+                    }
+                }
+            },
             onDurationPreset = { hours ->
-                durationText = formatHoursInput(hours)
-                Prefs.setDurationMinutes(context, (hours * 60).roundToInt())
-                WearSync.pushState(context)
-                syncSelectedZone(isArmed = armed)
+                defaultDurationText = formatHoursInput(hours)
+                Prefs.setDefaultDurationMinutes(context, (hours * 60).roundToInt())
+                if (placeSelectionMode == PlaceSelectionMode.CreateNew || !Prefs.hasPlace(context)) {
+                    durationText = defaultDurationText
+                }
             },
             onOpenAppSettings = {
                 openDwellAppSettings(context)
@@ -1992,8 +2078,12 @@ fun DwellScreen() {
                     clearPersistentSearchCache(context)
                     pin = null
                     selectedPlaceLabel = ""
+                    selectedPlaceId = ""
+                    placeSelectionMode = PlaceSelectionMode.CreateNew
                     radius = Prefs.getRadius(context)
                     durationText = formatHoursInput(Prefs.getDurationMinutes(context) / 60.0)
+                    defaultRadius = Prefs.getDefaultRadius(context)
+                    defaultDurationText = formatHoursInput(Prefs.getDefaultDurationMinutes(context) / 60.0)
                     timerEnd = 0L
                     WearSync.pushState(context)
                     route = AppRoute.Home
@@ -2021,8 +2111,12 @@ fun DwellScreen() {
                     clearPersistentSearchCache(context)
                     pin = null
                     selectedPlaceLabel = ""
+                    selectedPlaceId = ""
+                    placeSelectionMode = PlaceSelectionMode.CreateNew
                     radius = Prefs.getRadius(context)
                     durationText = formatHoursInput(Prefs.getDurationMinutes(context) / 60.0)
+                    defaultRadius = Prefs.getDefaultRadius(context)
+                    defaultDurationText = formatHoursInput(Prefs.getDefaultDurationMinutes(context) / 60.0)
                     timerEnd = 0L
                     signedIn = false
                     WearSync.pushState(context)
@@ -2044,6 +2138,7 @@ fun DwellScreen() {
                 toast("Search or long-press the map to add a place")
             },
             onViewPlace = { place ->
+                placeSelectionMode = PlaceSelectionMode.EditSelected
                 applyActivePlace(place)
                 refreshPlaces()
                 route = AppRoute.Home
@@ -2058,7 +2153,6 @@ fun DwellScreen() {
                 homeDockExpanded = true
             },
             onToggleMonitoring = toggleMonitoring@ { place, enabled ->
-                applyActivePlace(place)
                 if (enabled) {
                     when {
                         !hasFineLocation(context) ||
@@ -2169,6 +2263,9 @@ fun DwellScreen() {
 
                 MapHeader(
                     placeLabel = placeLabel,
+                    hasSavedPlace = places.isNotEmpty(),
+                    editingSelectedPlace = placeSelectionMode == PlaceSelectionMode.EditSelected &&
+                        selectedPlaceId.isNotBlank(),
                     searchText = searchText,
                     searchResults = searchResults,
                     searchSuggestions = searchSuggestions,
@@ -2180,17 +2277,11 @@ fun DwellScreen() {
                     expanded = searchPanelExpanded,
                     onExpandedChange = { searchPanelExpanded = it },
                     onSearchTextChange = {
-                        if (!homeDockExpanded) {
-                            placeSelectionMode = PlaceSelectionMode.CreateNew
-                        }
                         homeDockExpanded = false
                         searchPanelExpanded = true
                         updateSearchText(it)
                     },
                     onSubmit = {
-                        if (!homeDockExpanded) {
-                            placeSelectionMode = PlaceSelectionMode.CreateNew
-                        }
                         homeDockExpanded = false
                         searchPanelExpanded = true
                         performSearch()
@@ -2204,7 +2295,6 @@ fun DwellScreen() {
                         clearSearchState()
                         homeDockExpanded = false
                         if (!locating) {
-                            placeSelectionMode = PlaceSelectionMode.CreateNew
                             requestCurrentLocation(selectAsZone = true)
                         }
                     },
@@ -2213,6 +2303,16 @@ fun DwellScreen() {
                         clearSearchState()
                         homeDockExpanded = false
                         route = AppRoute.SavedZones
+                    },
+                    onCreateMode = {
+                        beginCreatePlace()
+                        searchPanelExpanded = true
+                        searchFocusRequest += 1
+                    },
+                    onEditSelectedMode = {
+                        if (beginEditActivePlace()) {
+                            searchPanelExpanded = true
+                        }
                     },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -2433,6 +2533,8 @@ private fun AuthScreen(
 @Composable
 private fun MapHeader(
     placeLabel: String,
+    hasSavedPlace: Boolean,
+    editingSelectedPlace: Boolean,
     searchText: String,
     searchResults: List<LocationSearchResult>,
     searchSuggestions: List<LocationSearchResult>,
@@ -2449,6 +2551,8 @@ private fun MapHeader(
     onSelectResult: (LocationSearchResult) -> Unit,
     onUseCurrentLocation: () -> Unit,
     onOpenSavedZones: () -> Unit,
+    onCreateMode: () -> Unit,
+    onEditSelectedMode: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val focusRequester = remember { FocusRequester() }
@@ -2520,7 +2624,10 @@ private fun MapHeader(
                 onValueChange = onSearchTextChange,
                 placeholder = {
                     Text(
-                        if (placeLabel == "No place selected") "Search place or address" else "Search places",
+                        mapSearchPlaceholder(
+                            hasPlace = placeLabel != "No place selected",
+                            editingSelectedPlace = editingSelectedPlace,
+                        ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -2545,7 +2652,15 @@ private fun MapHeader(
                     .onFocusChanged { focusState ->
                         searchFocused = focusState.isFocused
                         if (focusState.isFocused) onExpandedChange(true)
-                    },
+                },
+            )
+        }
+
+        if (hasSavedPlace) {
+            PlaceModeSelector(
+                editingSelectedPlace = editingSelectedPlace,
+                onEditSelectedMode = onEditSelectedMode,
+                onCreateMode = onCreateMode,
             )
         }
 
@@ -2564,8 +2679,53 @@ private fun MapHeader(
                 onSelectResult = onSelectResult,
                 onUseCurrentLocation = onUseCurrentLocation,
                 onOpenSavedZones = onOpenSavedZones,
+                editingSelectedPlace = editingSelectedPlace,
             )
         }
+    }
+}
+
+@Composable
+private fun PlaceModeSelector(
+    editingSelectedPlace: Boolean,
+    onEditSelectedMode: () -> Unit,
+    onCreateMode: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        FilterChip(
+            selected = editingSelectedPlace,
+            onClick = onEditSelectedMode,
+            leadingIcon = {
+                Icon(Icons.Filled.Place, contentDescription = null, modifier = Modifier.size(16.dp))
+            },
+            label = {
+                Text(
+                    "Edit selected",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            modifier = Modifier.weight(1f),
+        )
+        FilterChip(
+            selected = !editingSelectedPlace,
+            onClick = onCreateMode,
+            leadingIcon = {
+                Icon(Icons.Filled.Bookmark, contentDescription = null, modifier = Modifier.size(16.dp))
+            },
+            label = {
+                Text(
+                    "Add place",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
@@ -2582,6 +2742,7 @@ private fun MapSearchDropdown(
     onSelectResult: (LocationSearchResult) -> Unit,
     onUseCurrentLocation: () -> Unit,
     onOpenSavedZones: () -> Unit,
+    editingSelectedPlace: Boolean,
 ) {
     val cleanedQuery = cleanSearchQuery(searchText)
     Surface(
@@ -2608,7 +2769,7 @@ private fun MapSearchDropdown(
                     SearchActionRow(
                         icon = Icons.Filled.MyLocation,
                         title = "Use current location",
-                        subtitle = "Drop a zone where you are now",
+                        subtitle = currentLocationActionSubtitle(editingSelectedPlace),
                         loading = locating,
                         onClick = onUseCurrentLocation,
                     )
@@ -2628,7 +2789,10 @@ private fun MapSearchDropdown(
                     SearchActionRow(
                         icon = Icons.Filled.MyLocation,
                         title = "Use current location",
-                        subtitle = "Fastest way to create a nearby zone",
+                        subtitle = currentLocationActionSubtitle(
+                            editingSelectedPlace = editingSelectedPlace,
+                            compact = true,
+                        ),
                         loading = locating,
                         onClick = onUseCurrentLocation,
                     )
@@ -2718,7 +2882,7 @@ private fun MapActionRail(
         ) {
             MapRailButton(
                 icon = Icons.Filled.MyLocation,
-                contentDescription = "Current location",
+                contentDescription = "Center map on current location",
                 loading = locating,
                 emphasized = true,
                 onClick = onCurrentLocation,
@@ -2996,7 +3160,7 @@ private fun HomeStatusDock(
                     Text(
                         when {
                             timerActive -> statusDetail
-                            !expanded && hasPlace -> "$stateLabel | ${Notifications.formatDuration(durationMinutes)} | ${radius.roundToInt()} m | $placeLabel"
+                            !expanded && hasPlace -> "$stateLabel | ${arrivalModeLabel(activePlaceAutoStart)} | ${Notifications.formatDuration(durationMinutes)} | ${radius.roundToInt()} m | $placeLabel"
                             else -> statusDetail
                         },
                         maxLines = 1,
@@ -3641,7 +3805,7 @@ private fun ArrivalModeControl(
         )
         Column(Modifier.weight(1f)) {
             Text(
-                if (autoStart) "Auto-start" else "Confirm first",
+                arrivalModeLabel(autoStart),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -4534,9 +4698,11 @@ private fun PlaceRow(
             }
 
             Text(
-                "${place.radiusMeters.roundToInt()} m radius | ${Notifications.formatDuration(place.durationMinutes)} timer",
+                "${place.radiusMeters.roundToInt()} m radius | ${Notifications.formatDuration(place.durationMinutes)} timer | ${arrivalModeLabel(place.autoStart)}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

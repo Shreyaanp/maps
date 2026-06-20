@@ -47,7 +47,10 @@ object Prefs {
 
     fun getRadius(c: Context): Float =
         getActivePlace(c)?.radiusMeters
-            ?: DwellRadius.normalize(p(c).getFloat("radius", DwellRadius.DEFAULT_METERS))
+            ?: getDefaultRadius(c)
+
+    fun getDefaultRadius(c: Context): Float =
+        DwellRadius.normalize(p(c).getFloat("radius", DwellRadius.DEFAULT_METERS))
 
     fun getPlaceLabel(c: Context): String =
         getActivePlace(c)?.safeLabel
@@ -149,8 +152,7 @@ object Prefs {
             durationMinutes = durationMinutes,
             monitoringEnabled = monitoringEnabled,
         )
-        upsertPlace(c, place, makeActive = true)
-        return place
+        return upsertPlace(c, place, makeActive = true)
     }
 
     fun savePlace(c: Context, lat: Double, lon: Double) {
@@ -186,7 +188,7 @@ object Prefs {
             .apply()
     }
 
-    fun upsertPlace(c: Context, place: DwellPlace, makeActive: Boolean = true) {
+    fun upsertPlace(c: Context, place: DwellPlace, makeActive: Boolean = true): DwellPlace {
         val normalized = place.normalized()
         val places = getPlaces(c).toMutableList()
         val index = places.indexOfFirst { it.id == normalized.id }
@@ -196,19 +198,21 @@ object Prefs {
             places.add(normalized)
         }
         val savedPlaces = savePlaces(c, places)
-        val savedPlace = savedPlaces.firstOrNull { it.id == normalized.id } ?: normalized
+        val savedPlace = savedPlaces.firstOrNull { it.id == normalized.id }
+            ?: savedPlaces.firstOrNull { DwellPlace.isDuplicateSavedPlace(it, normalized) }
+            ?: normalized
         val editor = p(c).edit()
+        val shouldSyncLegacyFields = makeActive ||
+            p(c).getString(ACTIVE_PLACE_ID_KEY, null) == savedPlace.id
         if (makeActive) {
             editor.putString(ACTIVE_PLACE_ID_KEY, savedPlace.id)
         }
-        editor
-            .putLong("lat", savedPlace.latitude.toRawBits())
-            .putLong("lon", savedPlace.longitude.toRawBits())
-            .putFloat("radius", savedPlace.radiusMeters)
-            .putInt("duration_min", savedPlace.durationMinutes)
-            .putString("place_label", savedPlace.safeLabel)
-            .putBoolean("armed", savedPlaces.any { it.monitoringEnabled })
+        if (shouldSyncLegacyFields) {
+            editor.putLegacyPlaceFields(savedPlace)
+        }
+        editor.putBoolean("armed", savedPlaces.any { it.monitoringEnabled })
             .apply()
+        return savedPlace
     }
 
     fun deletePlace(c: Context, placeId: String) {
@@ -264,9 +268,21 @@ object Prefs {
         } ?: p(c).edit().putFloat("radius", normalized).apply()
     }
 
+    fun setDefaultRadius(c: Context, radius: Float) {
+        p(c).edit()
+            .putFloat("radius", DwellRadius.normalize(radius))
+            .apply()
+    }
+
     // Default 270 minutes = 4.5 hours
     fun getDurationMinutes(c: Context): Int =
-        getActivePlace(c)?.durationMinutes ?: p(c).getInt("duration_min", 270)
+        getActivePlace(c)?.durationMinutes ?: getDefaultDurationMinutes(c)
+
+    fun getDefaultDurationMinutes(c: Context): Int =
+        p(c).getInt("duration_min", 270).coerceIn(
+            DwellPlace.MIN_DURATION_MINUTES,
+            DwellPlace.MAX_DURATION_MINUTES,
+        )
 
     fun getDurationMinutes(c: Context, placeId: String?): Int =
         getPlace(c, placeId)?.durationMinutes ?: getDurationMinutes(c)
@@ -279,6 +295,14 @@ object Prefs {
         getActivePlace(c)?.let {
             upsertPlace(c, it.withTimerDefaults(it.radiusMeters, normalized))
         } ?: p(c).edit().putInt("duration_min", normalized).apply()
+    }
+
+    fun setDefaultDurationMinutes(c: Context, min: Int) {
+        val normalized = min.coerceIn(
+            DwellPlace.MIN_DURATION_MINUTES,
+            DwellPlace.MAX_DURATION_MINUTES,
+        )
+        p(c).edit().putInt("duration_min", normalized).apply()
     }
 
     fun setPlaceAutoStart(c: Context, placeId: String, enabled: Boolean): Boolean {
@@ -307,7 +331,7 @@ object Prefs {
         ) {
             return false
         }
-        upsertPlace(c, place.withMonitoring(armed), makeActive = true)
+        upsertPlace(c, place.withMonitoring(armed), makeActive = false)
         return true
     }
 

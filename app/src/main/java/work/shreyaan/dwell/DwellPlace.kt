@@ -1,6 +1,7 @@
 package work.shreyaan.dwell
 
 import org.json.JSONObject
+import java.util.Locale
 import java.util.UUID
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -34,7 +35,7 @@ data class DwellPlace(
 
     fun normalized(): DwellPlace =
         copy(
-            label = safeLabel.take(MAX_LABEL_LENGTH),
+            label = cleanDisplayLabel(label).take(MAX_LABEL_LENGTH),
             radiusMeters = DwellRadius.normalize(radiusMeters),
             durationMinutes = durationMinutes.coerceIn(MIN_DURATION_MINUTES, MAX_DURATION_MINUTES),
         )
@@ -90,6 +91,8 @@ data class DwellPlace(
         private const val APPROACH_REQUEST_ID_PREFIX = "dwell_approach_"
         private const val MAX_PLACE_ID_LENGTH = GEOFENCE_REQUEST_ID_MAX_LENGTH - 15
         private const val MAX_LABEL_LENGTH = 120
+        private const val DUPLICATE_PLACE_DISTANCE_METERS = 25f
+        private val LabelWhitespaceRegex = Regex("\\s+")
 
         fun create(
             label: String,
@@ -149,11 +152,48 @@ data class DwellPlace(
         fun isValidPlaceId(id: String): Boolean =
             id.isNotBlank() && id.length <= MAX_PLACE_ID_LENGTH
 
+        internal fun normalizedLabelIdentity(label: String): String =
+            cleanDisplayLabel(label)
+                .lowercase(Locale.ROOT)
+
+        private fun cleanDisplayLabel(label: String): String =
+            label.trim()
+                .replace(LabelWhitespaceRegex, " ")
+                .ifBlank { "Saved place" }
+
+        internal fun isDuplicateSavedPlace(
+            left: DwellPlace,
+            right: DwellPlace,
+            maxDistanceMeters: Float = DUPLICATE_PLACE_DISTANCE_METERS,
+        ): Boolean =
+            normalizedLabelIdentity(left.safeLabel) == normalizedLabelIdentity(right.safeLabel) &&
+                left.distanceMetersTo(right.latitude, right.longitude) <= maxDistanceMeters
+
         fun normalizePlaces(places: List<DwellPlace>): List<DwellPlace> {
             var monitoredCount = 0
-            return places
+            val uniqueIds = places
                 .map { it.normalized() }
-                .distinctBy { it.id }
+                .fold(mutableListOf<DwellPlace>()) { acc, place ->
+                    val index = acc.indexOfFirst { it.id == place.id }
+                    if (index >= 0) {
+                        acc[index] = place
+                    } else {
+                        acc += place
+                    }
+                    acc
+                }
+            return uniqueIds
+                .fold(mutableListOf<DwellPlace>()) { acc, place ->
+                    val index = acc.indexOfFirst { existing ->
+                        isDuplicateSavedPlace(existing, place)
+                    }
+                    if (index >= 0) {
+                        acc[index] = mergeDuplicatePlaces(acc[index], place)
+                    } else {
+                        acc += place
+                    }
+                    acc
+                }
                 .map { place ->
                     if (!place.monitoringEnabled) {
                         place
@@ -164,6 +204,21 @@ data class DwellPlace(
                         place.copy(monitoringEnabled = false).normalized()
                     }
                 }
+        }
+
+        private fun mergeDuplicatePlaces(existing: DwellPlace, incoming: DwellPlace): DwellPlace {
+            val incomingIsNewer = incoming.updatedAtMillis >= existing.updatedAtMillis
+            val latest = if (incomingIsNewer) incoming else existing
+            return existing.copy(
+                label = latest.safeLabel,
+                latitude = latest.latitude,
+                longitude = latest.longitude,
+                radiusMeters = latest.radiusMeters,
+                durationMinutes = latest.durationMinutes,
+                monitoringEnabled = existing.monitoringEnabled || incoming.monitoringEnabled,
+                autoStart = existing.autoStart,
+                updatedAtMillis = maxOf(existing.updatedAtMillis, incoming.updatedAtMillis),
+            ).normalized()
         }
 
         fun requestId(placeId: String): String =

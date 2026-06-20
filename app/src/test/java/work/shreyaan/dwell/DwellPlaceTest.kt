@@ -211,6 +211,66 @@ class DwellPlaceTest {
     }
 
     @Test
+    fun normalizePlacesCollapsesNearbyDuplicatesWithSameLabel() {
+        val existing = placeForDuplicateTest(
+            id = "office",
+            label = "Office",
+            latitude = 17.0000,
+            longitude = 78.0000,
+            radiusMeters = 100f,
+            durationMinutes = 60,
+            monitoringEnabled = true,
+            autoStart = false,
+            createdAtMillis = 1L,
+            updatedAtMillis = 1L,
+        )
+        val duplicate = placeForDuplicateTest(
+            id = "new-office",
+            label = "  office  ",
+            latitude = 17.0001,
+            longitude = 78.0000,
+            radiusMeters = 180f,
+            durationMinutes = 120,
+            monitoringEnabled = false,
+            autoStart = true,
+            createdAtMillis = 2L,
+            updatedAtMillis = 2L,
+        )
+
+        val normalized = DwellPlace.normalizePlaces(listOf(existing, duplicate))
+
+        assertEquals(1, normalized.size)
+        val merged = normalized.single()
+        assertEquals("office", merged.id)
+        assertEquals("office", merged.safeLabel)
+        assertEquals(17.0001, merged.latitude, 0.0001)
+        assertEquals(180f, merged.radiusMeters, 0f)
+        assertEquals(120, merged.durationMinutes)
+        assertTrue(merged.monitoringEnabled)
+        assertEquals(false, merged.autoStart)
+    }
+
+    @Test
+    fun normalizePlacesKeepsNearbyPlacesWithDifferentLabels() {
+        val office = placeForDuplicateTest("office", "Office", 17.0000, 78.0000)
+        val gym = placeForDuplicateTest("gym", "Gym", 17.0001, 78.0000)
+
+        val normalized = DwellPlace.normalizePlaces(listOf(office, gym))
+
+        assertEquals(listOf("office", "gym"), normalized.map { it.id })
+    }
+
+    @Test
+    fun normalizePlacesKeepsSameLabelWhenLocationsAreFarApart() {
+        val office = placeForDuplicateTest("office", "Office", 17.0000, 78.0000)
+        val otherOffice = placeForDuplicateTest("other-office", "Office", 17.0100, 78.0000)
+
+        val normalized = DwellPlace.normalizePlaces(listOf(office, otherOffice))
+
+        assertEquals(listOf("office", "other-office"), normalized.map { it.id })
+    }
+
+    @Test
     fun distanceMetersUsesPlaceCenter() {
         val place = DwellPlace.create(
             label = "Office",
@@ -222,4 +282,29 @@ class DwellPlaceTest {
 
         assertTrue(place.distanceMetersTo(17.001, 78.0) in 100f..125f)
     }
+
+    private fun placeForDuplicateTest(
+        id: String,
+        label: String,
+        latitude: Double,
+        longitude: Double,
+        radiusMeters: Float = 150f,
+        durationMinutes: Int = 270,
+        monitoringEnabled: Boolean = false,
+        autoStart: Boolean = true,
+        createdAtMillis: Long = 1L,
+        updatedAtMillis: Long = 1L,
+    ): DwellPlace =
+        DwellPlace(
+            id = id,
+            label = label,
+            latitude = latitude,
+            longitude = longitude,
+            radiusMeters = radiusMeters,
+            durationMinutes = durationMinutes,
+            monitoringEnabled = monitoringEnabled,
+            autoStart = autoStart,
+            createdAtMillis = createdAtMillis,
+            updatedAtMillis = updatedAtMillis,
+        )
 }
