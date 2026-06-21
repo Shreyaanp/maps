@@ -134,15 +134,55 @@ object DwellArrivalEngine {
             .firstOrNull { it?.monitoringEnabled == true }
     }
 
+    internal fun chooseZoneCandidate(
+        places: List<DwellPlace>,
+        latitude: Double?,
+        longitude: Double?,
+    ): DwellPlace? {
+        val candidates = places
+            .filter { it.monitoringEnabled }
+            .distinctBy { it.id }
+        if (candidates.isEmpty()) return null
+        if (
+            latitude != null &&
+            longitude != null &&
+            DwellPlace.hasValidCoordinates(latitude, longitude)
+        ) {
+            return candidates.minWithOrNull(
+                compareBy<DwellPlace> { it.distanceMetersTo(latitude, longitude) }
+                    .thenBy { it.createdAtMillis }
+                    .thenBy { it.safeLabel.lowercase() }
+                    .thenBy { it.id },
+            )
+        }
+        return candidates.first()
+    }
+
     fun runGeofenceEnterProbe(
         context: Context,
         placeId: String? = null,
         fallbackLocation: Location?,
         onComplete: () -> Unit,
+    ) = runGeofenceEnterProbe(
+        context = context,
+        placeIds = listOfNotNull(placeId?.takeIf { it.isNotBlank() }),
+        fallbackLocation = fallbackLocation,
+        onComplete = onComplete,
+    )
+
+    fun runGeofenceEnterProbe(
+        context: Context,
+        placeIds: List<String>,
+        fallbackLocation: Location?,
+        onComplete: () -> Unit,
     ) {
         val appContext = context.applicationContext
-        val place = resolvePlace(appContext, placeId)
-        if (place == null) {
+        val places = placeIds
+            .filter { it.isNotBlank() }
+            .distinct()
+            .mapNotNull { Prefs.getPlace(appContext, it) }
+            .filter { it.monitoringEnabled }
+        if (places.isEmpty()) {
             onComplete()
             return
         }
@@ -154,14 +194,21 @@ object DwellArrivalEngine {
             allowCoarse = false,
         ) { location ->
             if (!TimerController.isRunning(appContext)) {
-                handleArrival(
-                    context = appContext,
-                    place = place,
-                    location = location,
-                    source = "geofence",
-                    geofenceEnter = true,
-                    alreadyInsideCheck = false,
-                )
+                val freshPlaces = refreshedMonitoredPlaces(appContext, places)
+                chooseZoneCandidate(
+                    places = freshPlaces,
+                    latitude = location?.latitude,
+                    longitude = location?.longitude,
+                )?.let { place ->
+                    handleArrival(
+                        context = appContext,
+                        place = place,
+                        location = location,
+                        source = "geofence",
+                        geofenceEnter = true,
+                        alreadyInsideCheck = false,
+                    )
+                }
             }
             onComplete()
         }
@@ -173,19 +220,33 @@ object DwellArrivalEngine {
         placeId: String? = null,
         fallbackLocation: Location? = null,
         onComplete: () -> Unit,
+    ) = runApproachProbe(
+        context = context,
+        triggerMotion = triggerMotion,
+        placeIds = listOfNotNull(placeId?.takeIf { it.isNotBlank() }),
+        fallbackLocation = fallbackLocation,
+        onComplete = onComplete,
+    )
+
+    fun runApproachProbe(
+        context: Context,
+        triggerMotion: DwellMotion = Prefs.getMotion(context),
+        placeIds: List<String>,
+        fallbackLocation: Location? = null,
+        onComplete: () -> Unit,
     ) {
         val appContext = context.applicationContext
-        val requestedPlace = placeId
-            ?.takeIf { it.isNotBlank() }
-            ?.let { Prefs.getPlace(appContext, it) }
-            ?.takeIf { it.monitoringEnabled }
-        val armedPlaces = when {
-            !placeId.isNullOrBlank() && requestedPlace == null -> emptyList()
-            requestedPlace != null -> listOf(requestedPlace)
-            else -> Prefs.getArmedPlaces(appContext)
-        }
+        val requestedPlaceIds = placeIds
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        val armedPlaces = approachProbePlaces(
+            requestedPlaceIds = requestedPlaceIds,
+            armedPlaces = Prefs.getArmedPlaces(appContext),
+        )
+        val cooldownPlaceId = requestedPlaceIds.singleOrNull()
         val bypassCooldown = shouldBypassApproachCooldown(
-            previousMotion = Prefs.getLastApproachProbeMotion(appContext, placeId),
+            previousMotion = Prefs.getLastApproachProbeMotion(appContext, cooldownPlaceId),
             triggerMotion = triggerMotion,
         )
         when {
@@ -212,7 +273,7 @@ object DwellArrivalEngine {
             !Prefs.shouldRunApproachProbe(
                 appContext,
                 cooldownMs = APPROACH_PROBE_COOLDOWN_MS,
-                placeId = placeId,
+                placeId = cooldownPlaceId,
                 triggerMotion = triggerMotion,
                 bypassCooldown = bypassCooldown,
             ) -> {
@@ -244,12 +305,28 @@ object DwellArrivalEngine {
                 handleApproachProbeResult(
                     context = appContext,
                     location = location,
-                    candidatePlace = requestedPlace,
+                    candidatePlaces = armedPlaces,
                     onComplete = onComplete,
                 )
             } else {
                 onComplete()
             }
+        }
+    }
+
+    internal fun approachProbePlaces(
+        requestedPlaceIds: List<String>,
+        armedPlaces: List<DwellPlace>,
+    ): List<DwellPlace> {
+        val monitoredPlaces = armedPlaces
+            .filter { it.monitoringEnabled }
+            .distinctBy { it.id }
+        val requestedIds = requestedPlaceIds
+            .filter { it.isNotBlank() }
+            .distinct()
+        if (requestedIds.isEmpty()) return monitoredPlaces
+        return requestedIds.mapNotNull { requestedId ->
+            monitoredPlaces.firstOrNull { it.id == requestedId }
         }
     }
 
@@ -259,7 +336,18 @@ object DwellArrivalEngine {
         onComplete: () -> Unit,
     ) {
         val appContext = context.applicationContext
-        val place = resolvePlace(appContext, placeId)
+        val followUpPlaceId = scopedFollowUpPlaceId(placeId)
+        if (followUpPlaceId == null) {
+            DwellDiagnostics.logLifecycle(
+                appContext,
+                source = "follow-up",
+                decision = "skipped",
+                detail = "no scoped place",
+            )
+            onComplete()
+            return
+        }
+        val place = resolvePlace(appContext, followUpPlaceId)
         if (place == null || !place.monitoringEnabled || TimerController.isRunning(appContext)) {
             onComplete()
             return
@@ -272,10 +360,11 @@ object DwellArrivalEngine {
             timeoutMs = ARRIVAL_FIX_TIMEOUT_MS,
             allowCoarse = false,
         ) { location ->
-            if (!TimerController.isRunning(appContext)) {
+            val freshPlace = refreshedMonitoredPlace(appContext, place)
+            if (!TimerController.isRunning(appContext) && freshPlace != null) {
                 handleArrival(
                     context = appContext,
-                    place = place,
+                    place = freshPlace,
                     location = location,
                     source = "follow-up",
                     geofenceEnter = false,
@@ -285,6 +374,9 @@ object DwellArrivalEngine {
             onComplete()
         }
     }
+
+    internal fun scopedFollowUpPlaceId(placeId: String?): String? =
+        placeId?.trim()?.takeIf { it.isNotBlank() }
 
     fun runGeofenceExitProbe(
         context: Context,
@@ -299,7 +391,24 @@ object DwellArrivalEngine {
             return
         }
         val timerPlaceId = Prefs.getTimerPlaceId(appContext)
-        if (timerPlaceId.isNotBlank() && timerPlaceId != place.id) {
+        if (timerPlaceId.isBlank() || timerPlaceId != place.id) {
+            onComplete()
+            return
+        }
+        val timerStartedAt = Prefs.getTimerStartedAt(appContext)
+        val timerEnd = Prefs.getTimerEnd(appContext)
+        if (
+            !acceptsExitProbeTimerScope(
+                probePlaceId = place.id,
+                probeTimerPlaceId = timerPlaceId,
+                probeTimerStartedAt = timerStartedAt,
+                probeTimerEnd = timerEnd,
+                currentTimerPlaceId = timerPlaceId,
+                currentTimerStartedAt = timerStartedAt,
+                currentTimerEnd = timerEnd,
+                now = System.currentTimeMillis(),
+            )
+        ) {
             onComplete()
             return
         }
@@ -312,7 +421,16 @@ object DwellArrivalEngine {
             allowCoarse = false,
         ) { location ->
             if (
-                TimerController.isRunning(appContext) &&
+                acceptsExitProbeTimerScope(
+                    probePlaceId = place.id,
+                    probeTimerPlaceId = timerPlaceId,
+                    probeTimerStartedAt = timerStartedAt,
+                    probeTimerEnd = timerEnd,
+                    currentTimerPlaceId = Prefs.getTimerPlaceId(appContext),
+                    currentTimerStartedAt = Prefs.getTimerStartedAt(appContext),
+                    currentTimerEnd = Prefs.getTimerEnd(appContext),
+                    now = System.currentTimeMillis(),
+                ) &&
                 shouldPromptExit(appContext, place.id, location)
             ) {
                 Prefs.setWatchPrompt(
@@ -325,6 +443,31 @@ object DwellArrivalEngine {
             }
             onComplete()
         }
+    }
+
+    internal fun acceptsExitProbeTimerScope(
+        probePlaceId: String,
+        probeTimerPlaceId: String,
+        probeTimerStartedAt: Long,
+        probeTimerEnd: Long,
+        currentTimerPlaceId: String,
+        currentTimerStartedAt: Long,
+        currentTimerEnd: Long,
+        now: Long,
+    ): Boolean {
+        if (currentTimerEnd <= now) return false
+        val probeTimerPlace = probeTimerPlaceId.takeIf { it.isNotBlank() }
+            ?: return false
+        if (currentTimerPlaceId.isBlank()) return false
+        if (probeTimerPlace != probePlaceId) return false
+        return NotificationActionReceiver.acceptsScopedTimerAction(
+            currentTimerPlaceId = currentTimerPlaceId,
+            currentTimerStartedAt = currentTimerStartedAt,
+            currentTimerEnd = currentTimerEnd,
+            actionTimerPlaceId = probeTimerPlace,
+            actionTimerStartedAt = probeTimerStartedAt,
+            actionTimerEnd = probeTimerEnd,
+        )
     }
 
     fun shouldScheduleFollowUp(
@@ -415,6 +558,17 @@ object DwellArrivalEngine {
         val accuracy = accuracyMeters(location)
         val locationAge = locationAgeMs(location)
         val motion = Prefs.getMotion(context)
+        if (Prefs.isExitPromptSuppressed(context, place.id)) {
+            DwellDiagnostics.logExitPrompt(
+                context = context,
+                prompted = false,
+                distanceMeters = distance,
+                accuracyMeters = accuracy,
+                locationAgeMs = locationAge,
+                motion = motion,
+            )
+            return false
+        }
         val prompted = DwellConfidence.shouldPromptExit(
             distanceMeters = distance,
             radiusMeters = place.radiusMeters,
@@ -442,24 +596,29 @@ object DwellArrivalEngine {
         geofenceEnter: Boolean,
         alreadyInsideCheck: Boolean,
     ) {
+        val freshPlace = refreshedMonitoredPlace(context, place) ?: return
         val confidence = arrivalConfidence(
             context = context,
-            placeId = place.id,
+            placeId = freshPlace.id,
             location = location,
             source = source,
             geofenceEnter = geofenceEnter,
             alreadyInsideCheck = alreadyInsideCheck,
         )
-        applyArrivalDecision(context, place, confidence, location)
+        applyArrivalDecision(context, freshPlace, confidence, location)
     }
 
     private fun handleApproachProbeResult(
         context: Context,
         location: Location?,
-        candidatePlace: DwellPlace? = null,
+        candidatePlaces: List<DwellPlace>? = null,
         onComplete: () -> Unit,
     ) {
-        val place = candidatePlace ?: selectProbePlace(context, location)
+        val refreshedCandidates = refreshedMonitoredPlaces(
+            context = context,
+            places = candidatePlaces ?: Prefs.getArmedPlaces(context),
+        )
+        val place = selectProbePlace(context, location, refreshedCandidates)
         if (place == null) {
             DwellDiagnostics.logLifecycle(
                 context,
@@ -504,7 +663,8 @@ object DwellArrivalEngine {
             timeoutMs = ARRIVAL_FIX_TIMEOUT_MS,
             allowCoarse = false,
         ) { preciseLocation ->
-            if (!TimerController.isRunning(context)) {
+            val freshPlace = refreshedMonitoredPlace(context, place)
+            if (!TimerController.isRunning(context) && freshPlace != null) {
                 if (preciseLocation == null) {
                     ArrivalProbeReceiver.cancel(context)
                     val motion = Prefs.getMotion(context)
@@ -524,10 +684,10 @@ object DwellArrivalEngine {
                             decision = "precise-missing",
                             detail = "asking from broad score ${broadConfidence.score}",
                         )
-                        askToStart(context, place.id, broadConfidence.score)
+                        requestStartConfirmation(context, freshPlace.id, broadConfidence.score)
                     } else {
-                        Prefs.setPromptPlaceId(context, place.id)
-                        val scheduled = ArrivalProbeReceiver.schedule(context, place.id)
+                        Prefs.setPromptPlaceId(context, freshPlace.id)
+                        val scheduled = ArrivalProbeReceiver.schedule(context, freshPlace.id)
                         DwellDiagnostics.logLifecycle(
                             context,
                             source = "approach",
@@ -536,9 +696,14 @@ object DwellArrivalEngine {
                         )
                     }
                 } else {
+                    val precisePlace = selectProbePlace(
+                        context = context,
+                        location = preciseLocation,
+                        candidatePlaces = refreshedCandidates,
+                    ) ?: freshPlace
                     handleArrival(
                         context = context,
-                        place = place,
+                        place = precisePlace,
                         location = preciseLocation,
                         source = "approach-precise",
                         geofenceEnter = false,
@@ -556,40 +721,64 @@ object DwellArrivalEngine {
         confidence: ArrivalConfidence,
         location: Location?,
     ) {
-        val adjustedConfidence = applyPlacePolicy(place, confidence)
+        val currentPlace = refreshedMonitoredPlace(context, place) ?: return
+        val adjustedConfidence = applyPlacePolicy(currentPlace, confidence)
         when (adjustedConfidence.decision) {
             ArrivalDecision.START_TIMER -> {
                 ArrivalProbeReceiver.cancel(context)
-                TimerController.startTimer(context, place.durationMinutes, place.id)
+                TimerController.startTimer(context, currentPlace.durationMinutes, currentPlace.id)
             }
             ArrivalDecision.ASK_TO_START -> {
                 ArrivalProbeReceiver.cancel(context)
-                askToStart(context, place.id, adjustedConfidence.score)
+                requestStartConfirmation(context, currentPlace.id, adjustedConfidence.score)
             }
             ArrivalDecision.WAIT -> {
-                val distance = distanceFromZone(place, location)
+                val distance = distanceFromZone(currentPlace, location)
                 val accuracy = accuracyMeters(location)
                 val motion = Prefs.getMotion(context)
                 val shouldFollowUp = shouldScheduleFollowUp(
                     confidence = adjustedConfidence,
                     distanceMeters = distance,
-                    radiusMeters = place.radiusMeters,
+                    radiusMeters = currentPlace.radiusMeters,
                     accuracyMeters = accuracy,
                     speedMetersPerSecond = speedMetersPerSecond(location),
-                    observedInsideDurationMs = Prefs.getArrivalInsideDurationMs(context, place.id),
+                    observedInsideDurationMs = Prefs.getArrivalInsideDurationMs(context, currentPlace.id),
                     motion = motion,
                     motionAgeMs = Prefs.getMotionAgeMs(context),
                 )
                 if (shouldFollowUp) {
-                    Prefs.setPromptPlaceId(context, place.id)
-                    ArrivalProbeReceiver.schedule(context, place.id)
+                    Prefs.setPromptPlaceId(context, currentPlace.id)
+                    ArrivalProbeReceiver.schedule(context, currentPlace.id)
                 }
             }
         }
     }
 
-    private fun askToStart(context: Context, placeId: String, score: Int) {
-        Prefs.setWatchPrompt(context, Prefs.WATCH_PROMPT_START_TIMER, placeId)
+    internal fun shouldRequestStartConfirmation(
+        currentPrompt: String,
+        currentPromptPlaceId: String,
+        placeId: String,
+    ): Boolean =
+        currentPrompt != Prefs.WATCH_PROMPT_START_TIMER ||
+            currentPromptPlaceId != placeId
+
+    fun requestStartConfirmation(context: Context, placeId: String, score: Int) {
+        if (
+            !shouldRequestStartConfirmation(
+                currentPrompt = Prefs.getWatchPrompt(context),
+                currentPromptPlaceId = Prefs.getPromptPlaceId(context),
+                placeId = placeId,
+            )
+        ) {
+            WearSync.pushState(context)
+            return
+        }
+        Prefs.setWatchPrompt(
+            context,
+            Prefs.WATCH_PROMPT_START_TIMER,
+            placeId,
+            confidenceScore = score,
+        )
         Notifications.notifyArrivalQuestion(context, score)
         WearSync.pushState(context)
     }
@@ -855,10 +1044,39 @@ object DwellArrivalEngine {
             activePlace = Prefs.getActivePlace(context),
         )
 
-    private fun selectProbePlace(context: Context, location: Location?): DwellPlace? {
+    internal fun refreshedMonitoredPlace(
+        snapshot: DwellPlace,
+        current: DwellPlace?,
+    ): DwellPlace? =
+        current?.takeIf { it.id == snapshot.id && it.monitoringEnabled }
+
+    private fun refreshedMonitoredPlace(context: Context, snapshot: DwellPlace): DwellPlace? =
+        refreshedMonitoredPlace(snapshot, Prefs.getSavedPlace(context, snapshot.id))
+
+    internal fun refreshedMonitoredPlaces(
+        snapshots: List<DwellPlace>,
+        currentPlaces: List<DwellPlace>,
+    ): List<DwellPlace> {
+        val currentById = currentPlaces.associateBy { it.id }
+        return snapshots
+            .distinctBy { it.id }
+            .mapNotNull { snapshot -> refreshedMonitoredPlace(snapshot, currentById[snapshot.id]) }
+    }
+
+    private fun refreshedMonitoredPlaces(
+        context: Context,
+        places: List<DwellPlace>,
+    ): List<DwellPlace> =
+        refreshedMonitoredPlaces(places, Prefs.getPlaces(context))
+
+    private fun selectProbePlace(
+        context: Context,
+        location: Location?,
+        candidatePlaces: List<DwellPlace>? = null,
+    ): DwellPlace? {
         val validLocation = location.takeIf(::isValidArrivalLocation)
         return chooseApproachCandidate(
-            places = Prefs.getArmedPlaces(context),
+            places = candidatePlaces ?: Prefs.getArmedPlaces(context),
             latitude = validLocation?.latitude,
             longitude = validLocation?.longitude,
             accuracyMeters = accuracyMeters(validLocation),

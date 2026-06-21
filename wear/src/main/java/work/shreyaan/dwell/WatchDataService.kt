@@ -36,54 +36,93 @@ class WatchDataService : WearableListenerService() {
 
     private fun applyStateMap(map: DataMap) {
         val prefs = getSharedPreferences("dwell", MODE_PRIVATE)
+        val previousUpdated = prefs.getLong("updated", 0L)
+        val nextUpdated = map.getLong("updated", 0L)
+        if (!shouldApplyIncomingState(previousUpdated, nextUpdated)) return
         val previousEnd = prefs.getLong("timer_end", 0L)
         val previousPrompt = prefs.getString("prompt", "none") ?: "none"
         val previousPromptUpdated = prefs.getLong("prompt_updated", 0L)
         val nextEnd = map.getLong("end", 0L)
         val prompt = map.getString("prompt", "none")
         val promptUpdated = map.getLong("prompt_updated", 0L)
+        val placeLabel = map.getString("place_label", "")
+        val promptPlaceLabel = map.getString("prompt_place_label", "")
+            .ifBlank { placeLabel }
+        val timerPlaceLabel = map.getString("timer_place_label", "")
+            .ifBlank { placeLabel }
         val now = System.currentTimeMillis()
         prefs.edit()
             .putBoolean("has_place", map.getBoolean("has_place", false))
-            .putString("place_label", map.getString("place_label", ""))
+            .putString("place_id", map.getString("place_id", ""))
+            .putString("place_label", placeLabel)
+            .putString("prompt_place_label", promptPlaceLabel)
+            .putString("timer_place_label", timerPlaceLabel)
             .putBoolean("armed", map.getBoolean("armed", false))
             .putBoolean("needs_setup", map.getBoolean("needs_setup", false))
             .putString("monitoring_error", map.getString("monitoring_error", ""))
             .putLong("timer_end", nextEnd)
             .putLong("timer_started_at", map.getLong("started_at", 0L))
+            .putString("timer_place_id", map.getString("timer_place_id", ""))
             .putInt("duration_min", map.getInt("duration_min", 270))
             .putString("prompt", prompt)
+            .putString("prompt_place_id", map.getString("prompt_place_id", ""))
             .putLong("prompt_updated", promptUpdated)
             .putInt("place_count", map.getInt("place_count", 0))
             .putInt("armed_place_count", map.getInt("armed_place_count", 0))
             .putInt("registered_place_count", map.getInt("registered_place_count", 0))
-            .putLong("updated", map.getLong("updated", System.currentTimeMillis()))
+            .putLong("updated", nextUpdated.takeIf { it > 0L } ?: System.currentTimeMillis())
             .apply()
 
         val alert = prompt != previousPrompt || promptUpdated != previousPromptUpdated
-        if (prompt == "start_timer" && nextEnd <= now) {
+        if (nextEnd > now) {
+            WatchTimerExpiryReceiver.schedule(this, nextEnd, now)
+        } else {
+            WatchTimerExpiryReceiver.cancel(this)
+        }
+        if (prompt == "start_timer") {
             WatchNotifications.showArrivalQuestion(
                 this,
-                placeLabel = map.getString("place_label", ""),
+                placeLabel = stateNotificationPlaceLabel(
+                    prompt = prompt,
+                    placeLabel = placeLabel,
+                    promptPlaceLabel = promptPlaceLabel,
+                    timerPlaceLabel = timerPlaceLabel,
+                ),
                 alert = alert,
+                switching = nextEnd > now,
             )
         } else if (prompt == "leave_early" && nextEnd > now) {
             WatchNotifications.showLeavingEarly(
                 this,
-                placeLabel = map.getString("place_label", ""),
+                placeLabel = stateNotificationPlaceLabel(
+                    prompt = prompt,
+                    placeLabel = placeLabel,
+                    promptPlaceLabel = promptPlaceLabel,
+                    timerPlaceLabel = timerPlaceLabel,
+                ),
                 timerEnd = nextEnd,
                 alert = alert,
             )
         } else if (prompt == "time_up") {
             WatchNotifications.showTimeUp(
                 this,
-                placeLabel = map.getString("place_label", ""),
+                placeLabel = stateNotificationPlaceLabel(
+                    prompt = prompt,
+                    placeLabel = placeLabel,
+                    promptPlaceLabel = promptPlaceLabel,
+                    timerPlaceLabel = timerPlaceLabel,
+                ),
                 alert = alert,
             )
         } else if (nextEnd > now) {
             WatchNotifications.showTimerRunning(
                 this,
-                placeLabel = map.getString("place_label", ""),
+                placeLabel = stateNotificationPlaceLabel(
+                    prompt = prompt,
+                    placeLabel = placeLabel,
+                    promptPlaceLabel = promptPlaceLabel,
+                    timerPlaceLabel = timerPlaceLabel,
+                ),
                 timerEnd = nextEnd,
                 alert = previousEnd <= now,
             )
@@ -95,5 +134,28 @@ class WatchDataService : WearableListenerService() {
 
     companion object {
         private const val TAG = "DwellWatchData"
+
+        internal fun shouldApplyIncomingState(
+            previousUpdated: Long,
+            incomingUpdated: Long,
+        ): Boolean =
+            when {
+                previousUpdated <= 0L -> true
+                incomingUpdated <= 0L -> false
+                else -> incomingUpdated > previousUpdated
+            }
+
+        internal fun stateNotificationPlaceLabel(
+            prompt: String,
+            placeLabel: String,
+            promptPlaceLabel: String,
+            timerPlaceLabel: String,
+        ): String =
+            when (prompt) {
+                "start_timer" -> promptPlaceLabel.ifBlank { placeLabel }
+                "leave_early",
+                "time_up" -> timerPlaceLabel.ifBlank { placeLabel }
+                else -> timerPlaceLabel.ifBlank { placeLabel }
+            }
     }
 }

@@ -14,23 +14,26 @@ Modules:
 
 ## How it works
 
+For a user-facing walkthrough, start with [APP_TUTORIAL.md](APP_TUTORIAL.md).
+
 1. Open the app and choose a place by searching, using your current location,
    or long-pressing the map to drop a pin.
-2. Adjust the **radius** slider and default **duration**.
-3. Tap **Monitor**. Grant location, background location, notifications, and
-   physical activity permissions.
-4. Dwell registers a local inner arrival geofence plus a larger approach ring.
+2. Complete the one-time setup for location, background location,
+   notifications, physical activity, and battery reliability.
+3. Adjust the **radius** slider, default **duration**, and arrival mode.
+4. Tap **Save this place**, then **Monitor**.
+5. Dwell registers a local inner arrival geofence plus a larger approach ring.
    The approach ring wakes a lightweight confidence check; precise location is
    requested only when needed to start or ask.
-5. When confidence is high, the timer starts automatically. Medium confidence
+6. When confidence is high, the timer starts automatically. Medium confidence
    asks on the phone/watch. Low confidence keeps observing.
-6. You get an ongoing notification with a live countdown; Wear OS receives the
+7. You get an ongoing notification with a live countdown; Wear OS receives the
    same absolute end time so it can keep counting if the phone is briefly away.
-7. When the duration elapses, a loud alarm-style notification fires on the
+8. When the duration elapses, a loud alarm-style notification fires on the
    phone and buzzes the watch.
-8. If you **leave the zone early**, a notification asks whether to keep or
+9. If you **leave the place early**, a notification asks whether to keep or
    cancel the timer — the Keep/Cancel buttons work from the watch too.
-9. **Start timer now** runs the countdown manually without waiting for arrival
+10. **Start now** runs the countdown manually without waiting for arrival
    (also handy for testing).
 
 Timers and monitored places survive phone reboots when permissions remain
@@ -54,9 +57,10 @@ Two layers of watch support:
    notifications to the watch — the live countdown, the keep/cancel question,
    and the final alarm. Make sure notifications from Dwell are not muted in
    the Pixel Watch app's "Watch notifications" settings.
-2. **The `wear/` watch app:** shows ready, active, leave-early, and time-up
-   states on compact swipeable screens. The active timer syncs an absolute end
-   time, so the watch can keep counting down if the phone is briefly not nearby.
+2. **The `wear/` watch app:** shows setup, monitoring, active timer,
+   leave-early, and time-up states on compact swipeable screens. The active
+   timer syncs an absolute end time, so the watch can keep counting down if the
+   phone is briefly not nearby.
    Install it on the watch via `adb install` over the watch's Wireless debugging,
    or distribute both apps through Google Play (phone track + Wear OS track).
 
@@ -90,6 +94,12 @@ For phone + watch local testing:
 ./scripts/setup-local-testing.sh
 ```
 
+For the phone-side on-device Home/Office/Gym logic gate:
+
+```sh
+./scripts/run-device-flow-tests.sh
+```
+
 Then follow [FIELD_TEST.md](FIELD_TEST.md). To capture a privacy-safe field
 run while testing, use:
 
@@ -99,7 +109,7 @@ DURATION_SECONDS=900 ./scripts/capture-field-logs.sh
 
 ## Testing the geofence without driving anywhere
 
-- Use **Start timer now** with a small duration (e.g. `0.05` hours = 3 min) to
+- Use **Start now** with a small duration (e.g. `0.05` hours = 3 min) to
   see the full notification → watch → alarm flow.
 - Or run the app in an Android emulator and simulate GPS positions from the
   emulator's location controls to cross the geofence boundary.

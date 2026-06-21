@@ -90,7 +90,8 @@ data class DwellPlace(
         private const val ZONE_REQUEST_ID_PREFIX = "dwell_place_"
         private const val APPROACH_REQUEST_ID_PREFIX = "dwell_approach_"
         private const val MAX_PLACE_ID_LENGTH = GEOFENCE_REQUEST_ID_MAX_LENGTH - 15
-        private const val MAX_LABEL_LENGTH = 120
+        const val MAX_LABEL_LENGTH = 120
+        private const val NEAR_EXACT_DUPLICATE_DISTANCE_METERS = 5f
         private const val DUPLICATE_PLACE_DISTANCE_METERS = 25f
         private val LabelWhitespaceRegex = Regex("\\s+")
 
@@ -165,9 +166,14 @@ data class DwellPlace(
             left: DwellPlace,
             right: DwellPlace,
             maxDistanceMeters: Float = DUPLICATE_PLACE_DISTANCE_METERS,
-        ): Boolean =
-            normalizedLabelIdentity(left.safeLabel) == normalizedLabelIdentity(right.safeLabel) &&
-                left.distanceMetersTo(right.latitude, right.longitude) <= maxDistanceMeters
+        ): Boolean {
+            val distanceMeters = left.distanceMetersTo(right.latitude, right.longitude)
+            return distanceMeters <= NEAR_EXACT_DUPLICATE_DISTANCE_METERS ||
+                (
+                    normalizedLabelIdentity(left.safeLabel) == normalizedLabelIdentity(right.safeLabel) &&
+                        distanceMeters <= maxDistanceMeters
+                    )
+        }
 
         fun normalizePlaces(places: List<DwellPlace>): List<DwellPlace> {
             var monitoredCount = 0
@@ -207,14 +213,7 @@ data class DwellPlace(
         }
 
         private fun mergeDuplicatePlaces(existing: DwellPlace, incoming: DwellPlace): DwellPlace {
-            val incomingIsNewer = incoming.updatedAtMillis >= existing.updatedAtMillis
-            val latest = if (incomingIsNewer) incoming else existing
             return existing.copy(
-                label = latest.safeLabel,
-                latitude = latest.latitude,
-                longitude = latest.longitude,
-                radiusMeters = latest.radiusMeters,
-                durationMinutes = latest.durationMinutes,
                 monitoringEnabled = existing.monitoringEnabled || incoming.monitoringEnabled,
                 autoStart = existing.autoStart,
                 updatedAtMillis = maxOf(existing.updatedAtMillis, incoming.updatedAtMillis),

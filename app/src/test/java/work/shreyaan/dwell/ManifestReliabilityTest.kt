@@ -47,6 +47,49 @@ class ManifestReliabilityTest {
         assertTrue(actions.contains("android.intent.action.MY_PACKAGE_REPLACED"))
     }
 
+    @Test
+    fun appManifestDeclaresBackgroundReliabilityPermissions() {
+        val manifest = xmlFile("src/main/AndroidManifest.xml")
+
+        val permissions = manifest.documentElement
+            .getElementsByTagName("uses-permission")
+            .asElements()
+            .map { it.androidAttr("name") }
+            .toSet()
+
+        assertTrue(permissions.contains("android.permission.ACCESS_FINE_LOCATION"))
+        assertTrue(permissions.contains("android.permission.ACCESS_COARSE_LOCATION"))
+        assertTrue(permissions.contains("android.permission.ACCESS_BACKGROUND_LOCATION"))
+        assertTrue(permissions.contains("android.permission.ACTIVITY_RECOGNITION"))
+        assertTrue(permissions.contains("android.permission.POST_NOTIFICATIONS"))
+        assertTrue(permissions.contains("android.permission.SCHEDULE_EXACT_ALARM"))
+    }
+
+    @Test
+    fun wearManifestCanReceivePhoneStateAndShowAlerts() {
+        val manifest = xmlFile("wear/src/main/AndroidManifest.xml")
+
+        val permissions = manifest.documentElement
+            .getElementsByTagName("uses-permission")
+            .asElements()
+            .map { it.androidAttr("name") }
+            .toSet()
+        assertTrue(permissions.contains("android.permission.POST_NOTIFICATIONS"))
+
+        val watchDataService = manifest.documentElement
+            .getElementsByTagName("service")
+            .asElements()
+            .first { it.androidAttr("name") == ".WatchDataService" }
+        val actions = watchDataService
+            .getElementsByTagName("action")
+            .asElements()
+            .map { it.androidAttr("name") }
+            .toSet()
+
+        assertTrue(actions.contains("com.google.android.gms.wearable.DATA_CHANGED"))
+        assertTrue(actions.contains("com.google.android.gms.wearable.MESSAGE_RECEIVED"))
+    }
+
     private fun xmlFile(path: String) =
         DocumentBuilderFactory.newInstance()
             .apply { isNamespaceAware = true }
@@ -58,6 +101,7 @@ class ManifestReliabilityTest {
             File(path),
             File("app", path),
             File("../app", path),
+            File("..", path),
         ).firstOrNull { it.isFile } ?: error("Could not find $path from ${File(".").absolutePath}")
 
     private fun Element.androidAttr(name: String): String =

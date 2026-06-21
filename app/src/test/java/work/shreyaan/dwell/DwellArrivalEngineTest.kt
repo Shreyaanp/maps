@@ -244,6 +244,31 @@ class DwellArrivalEngineTest {
     }
 
     @Test
+    fun startConfirmationIsNotReissuedForSameLivePrompt() {
+        assertFalse(
+            DwellArrivalEngine.shouldRequestStartConfirmation(
+                currentPrompt = Prefs.WATCH_PROMPT_START_TIMER,
+                currentPromptPlaceId = "office",
+                placeId = "office",
+            )
+        )
+        assertTrue(
+            DwellArrivalEngine.shouldRequestStartConfirmation(
+                currentPrompt = Prefs.WATCH_PROMPT_START_TIMER,
+                currentPromptPlaceId = "gym",
+                placeId = "office",
+            )
+        )
+        assertTrue(
+            DwellArrivalEngine.shouldRequestStartConfirmation(
+                currentPrompt = Prefs.WATCH_PROMPT_NONE,
+                currentPromptPlaceId = "office",
+                placeId = "office",
+            )
+        )
+    }
+
+    @Test
     fun blankPlaceIdFallsBackToActivePlace() {
         val active = testPlace("active")
 
@@ -295,6 +320,14 @@ class DwellArrivalEngineTest {
     }
 
     @Test
+    fun followUpProbeRequiresScopedPlaceIdInsteadOfBorrowingActivePlace() {
+        assertEquals("office", DwellArrivalEngine.scopedFollowUpPlaceId(" office "))
+        assertEquals(null, DwellArrivalEngine.scopedFollowUpPlaceId(null))
+        assertEquals(null, DwellArrivalEngine.scopedFollowUpPlaceId(""))
+        assertEquals(null, DwellArrivalEngine.scopedFollowUpPlaceId("   "))
+    }
+
+    @Test
     fun approachCandidateChoosesNearestMonitoredPlaceInsideWakeRing() {
         val office = testPlace("office", latitude = 17.0000, longitude = 78.0000)
         val gym = testPlace("gym", latitude = 17.0030, longitude = 78.0000)
@@ -307,6 +340,82 @@ class DwellArrivalEngineTest {
                 longitude = 78.0000,
                 promptPlace = null,
                 activePlace = null,
+            ),
+        )
+    }
+
+    @Test
+    fun approachProbePlacesKeepsAllTriggeredMonitoredCandidates() {
+        val office = testPlace("office", latitude = 17.0000, longitude = 78.0000)
+        val gym = testPlace("gym", latitude = 17.0030, longitude = 78.0000)
+        val paused = testPlace("paused").copy(monitoringEnabled = false)
+
+        assertEquals(
+            listOf("gym", "office"),
+            DwellArrivalEngine.approachProbePlaces(
+                requestedPlaceIds = listOf("gym", "office", "missing", "gym"),
+                armedPlaces = listOf(office, gym, paused),
+            ).map { it.id },
+        )
+        assertEquals(
+            listOf("office", "gym"),
+            DwellArrivalEngine.approachProbePlaces(
+                requestedPlaceIds = emptyList(),
+                armedPlaces = listOf(office, gym, paused),
+            ).map { it.id },
+        )
+    }
+
+    @Test
+    fun staleArrivalSnapshotMustStillExistAndBeMonitoredBeforeMutation() {
+        val officeSnapshot = testPlace("office")
+        val officeCurrent = officeSnapshot.copy(updatedAtMillis = 2L)
+        val pausedOffice = officeCurrent.copy(monitoringEnabled = false)
+        val renamedDifferentId = testPlace("office-new")
+
+        assertEquals(
+            officeCurrent,
+            DwellArrivalEngine.refreshedMonitoredPlace(
+                snapshot = officeSnapshot,
+                current = officeCurrent,
+            ),
+        )
+        assertEquals(
+            null,
+            DwellArrivalEngine.refreshedMonitoredPlace(
+                snapshot = officeSnapshot,
+                current = pausedOffice,
+            ),
+        )
+        assertEquals(
+            null,
+            DwellArrivalEngine.refreshedMonitoredPlace(
+                snapshot = officeSnapshot,
+                current = renamedDifferentId,
+            ),
+        )
+        assertEquals(
+            null,
+            DwellArrivalEngine.refreshedMonitoredPlace(
+                snapshot = officeSnapshot,
+                current = null,
+            ),
+        )
+    }
+
+    @Test
+    fun staleArrivalCandidateListsDropPausedDeletedAndWrongIdPlaces() {
+        val officeSnapshot = testPlace("office")
+        val gymSnapshot = testPlace("gym")
+        val homeSnapshot = testPlace("home")
+        val currentOffice = officeSnapshot.copy(updatedAtMillis = 2L)
+        val pausedGym = gymSnapshot.copy(monitoringEnabled = false)
+
+        assertEquals(
+            listOf(currentOffice),
+            DwellArrivalEngine.refreshedMonitoredPlaces(
+                snapshots = listOf(officeSnapshot, gymSnapshot, homeSnapshot, officeSnapshot),
+                currentPlaces = listOf(currentOffice, pausedGym, testPlace("other")),
             ),
         )
     }
@@ -378,6 +487,36 @@ class DwellArrivalEngineTest {
                 longitude = 78.0,
                 promptPlace = null,
                 activePlace = active,
+            ),
+        )
+    }
+
+    @Test
+    fun zoneCandidateChoosesNearestTriggeredPlaceFromFreshFix() {
+        val office = testPlace("office", latitude = 17.0000, longitude = 78.0000)
+        val gym = testPlace("gym", latitude = 17.0030, longitude = 78.0000)
+
+        assertEquals(
+            gym,
+            DwellArrivalEngine.chooseZoneCandidate(
+                places = listOf(office, gym),
+                latitude = 17.0028,
+                longitude = 78.0000,
+            ),
+        )
+    }
+
+    @Test
+    fun zoneCandidateFallsBackToTriggeredPriorityWithoutUsableFreshFix() {
+        val office = testPlace("office", latitude = 17.0000, longitude = 78.0000)
+        val gym = testPlace("gym", latitude = 17.0030, longitude = 78.0000)
+
+        assertEquals(
+            office,
+            DwellArrivalEngine.chooseZoneCandidate(
+                places = listOf(office, gym),
+                latitude = null,
+                longitude = null,
             ),
         )
     }
@@ -498,6 +637,94 @@ class DwellArrivalEngineTest {
                 DetectedActivity.ON_FOOT,
                 ActivityTransition.ACTIVITY_TRANSITION_ENTER,
             ),
+        )
+    }
+
+    @Test
+    fun exitProbeTimerScopeRejectsNewerOrExpiredTimers() {
+        assertTrue(
+            DwellArrivalEngine.acceptsExitProbeTimerScope(
+                probePlaceId = "office",
+                probeTimerPlaceId = "office",
+                probeTimerStartedAt = 1_000L,
+                probeTimerEnd = 10_000L,
+                currentTimerPlaceId = "office",
+                currentTimerStartedAt = 1_000L,
+                currentTimerEnd = 10_000L,
+                now = 5_000L,
+            )
+        )
+        assertFalse(
+            DwellArrivalEngine.acceptsExitProbeTimerScope(
+                probePlaceId = "office",
+                probeTimerPlaceId = "office",
+                probeTimerStartedAt = 1_000L,
+                probeTimerEnd = 10_000L,
+                currentTimerPlaceId = "gym",
+                currentTimerStartedAt = 2_000L,
+                currentTimerEnd = 11_000L,
+                now = 5_000L,
+            )
+        )
+        assertFalse(
+            DwellArrivalEngine.acceptsExitProbeTimerScope(
+                probePlaceId = "office",
+                probeTimerPlaceId = "gym",
+                probeTimerStartedAt = 1_000L,
+                probeTimerEnd = 10_000L,
+                currentTimerPlaceId = "gym",
+                currentTimerStartedAt = 1_000L,
+                currentTimerEnd = 10_000L,
+                now = 5_000L,
+            )
+        )
+        assertFalse(
+            DwellArrivalEngine.acceptsExitProbeTimerScope(
+                probePlaceId = "office",
+                probeTimerPlaceId = "office",
+                probeTimerStartedAt = 1_000L,
+                probeTimerEnd = 10_000L,
+                currentTimerPlaceId = "office",
+                currentTimerStartedAt = 1_000L,
+                currentTimerEnd = 10_000L,
+                now = 10_000L,
+            )
+        )
+        assertFalse(
+            DwellArrivalEngine.acceptsExitProbeTimerScope(
+                probePlaceId = "office",
+                probeTimerPlaceId = "",
+                probeTimerStartedAt = 1_000L,
+                probeTimerEnd = 10_000L,
+                currentTimerPlaceId = "",
+                currentTimerStartedAt = 1_000L,
+                currentTimerEnd = 10_000L,
+                now = 5_000L,
+            )
+        )
+        assertFalse(
+            DwellArrivalEngine.acceptsExitProbeTimerScope(
+                probePlaceId = "office",
+                probeTimerPlaceId = "office",
+                probeTimerStartedAt = 1_000L,
+                probeTimerEnd = 10_000L,
+                currentTimerPlaceId = "",
+                currentTimerStartedAt = 1_000L,
+                currentTimerEnd = 10_000L,
+                now = 5_000L,
+            )
+        )
+        assertFalse(
+            DwellArrivalEngine.acceptsExitProbeTimerScope(
+                probePlaceId = "office",
+                probeTimerPlaceId = "",
+                probeTimerStartedAt = 1_000L,
+                probeTimerEnd = 10_000L,
+                currentTimerPlaceId = "office",
+                currentTimerStartedAt = 1_000L,
+                currentTimerEnd = 10_000L,
+                now = 5_000L,
+            )
         )
     }
 

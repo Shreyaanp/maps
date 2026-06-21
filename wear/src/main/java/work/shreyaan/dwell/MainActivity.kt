@@ -1,6 +1,7 @@
 package work.shreyaan.dwell
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
@@ -65,14 +66,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WatchNotifications.ensureChannels(this)
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.POST_NOTIFICATIONS,
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 20)
-        }
         setContent {
             MaterialTheme {
                 WatchScreen()
@@ -83,14 +76,19 @@ class MainActivity : ComponentActivity() {
 
 private data class WatchState(
     val hasPlace: Boolean,
+    val placeId: String,
     val placeLabel: String,
+    val promptPlaceLabel: String,
+    val timerPlaceLabel: String,
     val armed: Boolean,
     val needsSetup: Boolean,
     val monitoringError: String,
     val timerEnd: Long,
     val timerStartedAt: Long,
+    val timerPlaceId: String,
     val durationMinutes: Int,
     val prompt: String,
+    val promptPlaceId: String,
     val promptUpdated: Long,
     val placeCount: Int,
     val armedPlaceCount: Int,
@@ -102,6 +100,11 @@ private const val PROMPT_NONE = "none"
 private const val PROMPT_START_TIMER = "start_timer"
 private const val PROMPT_LEAVE_EARLY = "leave_early"
 private const val PROMPT_TIME_UP = "time_up"
+private val placeholderPlaceLabels = setOf(
+    "Selected place",
+    "Saved place",
+    "No place selected",
+)
 
 private enum class WatchPage {
     Glance,
@@ -112,18 +115,78 @@ private enum class WatchPage {
 private fun prefs(c: Context): SharedPreferences =
     c.getSharedPreferences("dwell", Context.MODE_PRIVATE)
 
+private fun hasWatchNotificationPermission(c: Context): Boolean =
+    Build.VERSION.SDK_INT < 33 ||
+        ContextCompat.checkSelfPermission(
+            c,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+
+private fun requestWatchNotificationPermission(c: Context): Boolean {
+    if (hasWatchNotificationPermission(c)) return true
+    if (Build.VERSION.SDK_INT < 33) return true
+    val activity = c as? Activity ?: return false
+    activity.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 20)
+    return true
+}
+
+internal fun watchNotificationPermissionActionLabel(canNotify: Boolean): String =
+    if (canNotify) "" else "Allow watch alerts"
+
+internal fun watchNotificationPermissionFeedback(opened: Boolean): String =
+    if (opened) "Watch alert prompt opened" else "Open watch settings"
+
+internal fun watchReadyTitle(
+    hasPlace: Boolean,
+    armed: Boolean,
+    needsSetup: Boolean,
+    lastUpdated: Long = 1L,
+    now: Long = lastUpdated,
+    livePlaceCount: Int = 0,
+): String = when {
+    lastUpdated <= 0L -> "Syncing"
+    WatchSyncCopy.isStale(lastUpdated, now) -> "Phone not nearby"
+    needsSetup -> "Needs setup"
+    armed && livePlaceCount > 1 -> "$livePlaceCount places live"
+    armed -> "Monitoring live"
+    hasPlace -> "Monitoring paused"
+    else -> "No place yet"
+}
+
+internal fun watchReadyDetail(
+    hasPlace: Boolean,
+    armed: Boolean,
+    needsSetup: Boolean,
+    lastUpdated: Long = 1L,
+    now: Long = lastUpdated,
+    livePlaceCount: Int = 0,
+): String = when {
+    lastUpdated <= 0L -> "Open phone once"
+    WatchSyncCopy.isStale(lastUpdated, now) -> "Open phone app"
+    needsSetup -> "Finish setup on phone"
+    armed && livePlaceCount > 1 -> "Waiting for arrivals"
+    armed -> "Waiting for arrival"
+    hasPlace -> "Turn on Monitor"
+    else -> "Choose a place on phone"
+}
+
 private fun readWatchState(c: Context): WatchState {
     val p = prefs(c)
     return WatchState(
         hasPlace = p.getBoolean("has_place", false),
+        placeId = p.getString("place_id", "") ?: "",
         placeLabel = p.getString("place_label", "") ?: "",
+        promptPlaceLabel = p.getString("prompt_place_label", "") ?: "",
+        timerPlaceLabel = p.getString("timer_place_label", "") ?: "",
         armed = p.getBoolean("armed", false),
         needsSetup = p.getBoolean("needs_setup", false),
         monitoringError = p.getString("monitoring_error", "") ?: "",
         timerEnd = p.getLong("timer_end", 0L),
         timerStartedAt = p.getLong("timer_started_at", 0L),
+        timerPlaceId = p.getString("timer_place_id", "") ?: "",
         durationMinutes = p.getInt("duration_min", 270),
         prompt = p.getString("prompt", PROMPT_NONE) ?: PROMPT_NONE,
+        promptPlaceId = p.getString("prompt_place_id", "") ?: "",
         promptUpdated = p.getLong("prompt_updated", 0L),
         placeCount = p.getInt("place_count", 0),
         armedPlaceCount = p.getInt("armed_place_count", 0),
@@ -132,23 +195,48 @@ private fun readWatchState(c: Context): WatchState {
     )
 }
 
-private fun persistDataMap(c: Context, map: DataMap) {
-    prefs(c).edit()
+private fun persistDataMap(c: Context, map: DataMap): Boolean {
+    val p = prefs(c)
+    val incomingUpdated = map.getLong("updated", 0L)
+    if (!WatchDataService.shouldApplyIncomingState(p.getLong("updated", 0L), incomingUpdated)) {
+        return false
+    }
+    val placeLabel = map.getString("place_label", "")
+    val nextEnd = map.getLong("end", 0L)
+    val now = System.currentTimeMillis()
+    p.edit()
         .putBoolean("has_place", map.getBoolean("has_place", false))
-        .putString("place_label", map.getString("place_label", ""))
+        .putString("place_id", map.getString("place_id", ""))
+        .putString("place_label", placeLabel)
+        .putString(
+            "prompt_place_label",
+            map.getString("prompt_place_label", "").ifBlank { placeLabel },
+        )
+        .putString(
+            "timer_place_label",
+            map.getString("timer_place_label", "").ifBlank { placeLabel },
+        )
         .putBoolean("armed", map.getBoolean("armed", false))
         .putBoolean("needs_setup", map.getBoolean("needs_setup", false))
         .putString("monitoring_error", map.getString("monitoring_error", ""))
-        .putLong("timer_end", map.getLong("end", 0L))
+        .putLong("timer_end", nextEnd)
         .putLong("timer_started_at", map.getLong("started_at", 0L))
+        .putString("timer_place_id", map.getString("timer_place_id", ""))
         .putInt("duration_min", map.getInt("duration_min", 270))
         .putString("prompt", map.getString("prompt", PROMPT_NONE))
+        .putString("prompt_place_id", map.getString("prompt_place_id", ""))
         .putLong("prompt_updated", map.getLong("prompt_updated", 0L))
         .putInt("place_count", map.getInt("place_count", 0))
         .putInt("armed_place_count", map.getInt("armed_place_count", 0))
         .putInt("registered_place_count", map.getInt("registered_place_count", 0))
-        .putLong("updated", map.getLong("updated", System.currentTimeMillis()))
+        .putLong("updated", incomingUpdated.takeIf { it > 0L } ?: now)
         .apply()
+    if (nextEnd > now) {
+        WatchTimerExpiryReceiver.schedule(c, nextEnd, now)
+    } else {
+        WatchTimerExpiryReceiver.cancel(c)
+    }
+    return true
 }
 
 private suspend fun sendPhoneCommand(
@@ -168,11 +256,180 @@ private suspend fun sendPhoneCommand(
     true
 }.getOrDefault(false)
 
-internal fun promptCommandPayload(promptUpdated: Long): String =
-    promptUpdated.toString()
+internal fun promptCommandPayload(
+    prompt: String,
+    promptUpdated: Long,
+    promptPlaceId: String,
+    timerPlaceId: String,
+    timerStartedAt: Long,
+    timerEnd: Long,
+): String = listOf(
+    "prompt",
+    prompt,
+    promptUpdated.toString(),
+    promptPlaceId,
+    timerPlaceId,
+    timerStartedAt.toString(),
+    timerEnd.toString(),
+).joinToString("|")
 
 private fun promptCommandPayload(state: WatchState): String =
-    promptCommandPayload(state.promptUpdated)
+    promptCommandPayload(
+        prompt = state.prompt,
+        promptUpdated = state.promptUpdated,
+        promptPlaceId = state.promptPlaceId,
+        timerPlaceId = state.timerPlaceId,
+        timerStartedAt = state.timerStartedAt,
+        timerEnd = state.timerEnd,
+    )
+
+internal fun timerCommandPayload(
+    placeId: String,
+    timerStartedAt: Long,
+    timerEnd: Long,
+    minutes: Int? = null,
+): String = listOf(
+    placeId,
+    timerStartedAt.toString(),
+    timerEnd.toString(),
+    minutes?.toString().orEmpty(),
+).joinToString("|")
+
+private fun timerCommandPayload(state: WatchState, minutes: Int? = null): String =
+    timerCommandPayload(
+        placeId = state.timerPlaceId,
+        timerStartedAt = state.timerStartedAt,
+        timerEnd = state.timerEnd,
+        minutes = minutes,
+    )
+
+internal fun timeUpExtendCommandPayload(
+    promptUpdated: Long,
+    placeId: String,
+    minutes: Int,
+): String = listOf(
+    "time_up_extend",
+    promptUpdated.toString(),
+    placeId,
+    minutes.toString(),
+).joinToString("|")
+
+internal fun extendCommandPayload(
+    prompt: String,
+    promptUpdated: Long,
+    placeId: String,
+    timerStartedAt: Long,
+    timerEnd: Long,
+    minutes: Int,
+): String =
+    if (prompt == PROMPT_TIME_UP && promptUpdated > 0L) {
+        timeUpExtendCommandPayload(
+            promptUpdated = promptUpdated,
+            placeId = placeId,
+            minutes = minutes,
+        )
+    } else {
+        timerCommandPayload(
+            placeId = placeId,
+            timerStartedAt = timerStartedAt,
+            timerEnd = timerEnd,
+            minutes = minutes,
+        )
+    }
+
+private fun extendCommandPayload(state: WatchState, minutes: Int): String =
+    extendCommandPayload(
+        prompt = state.prompt,
+        promptUpdated = state.promptUpdated,
+        placeId = state.timerPlaceId,
+        timerStartedAt = state.timerStartedAt,
+        timerEnd = state.timerEnd,
+        minutes = minutes,
+    )
+
+internal fun doneCommandPayload(
+    prompt: String,
+    promptUpdated: Long,
+    promptPlaceId: String,
+    placeId: String,
+    timerStartedAt: Long,
+    timerEnd: Long,
+): String =
+    if (prompt == PROMPT_TIME_UP) {
+        promptCommandPayload(
+            prompt = prompt,
+            promptUpdated = promptUpdated,
+            promptPlaceId = promptPlaceId,
+            timerPlaceId = placeId,
+            timerStartedAt = timerStartedAt,
+            timerEnd = timerEnd,
+        )
+    } else {
+        timerCommandPayload(
+            placeId = placeId,
+            timerStartedAt = timerStartedAt,
+            timerEnd = timerEnd,
+        )
+    }
+
+private fun doneCommandPayload(state: WatchState): String =
+    doneCommandPayload(
+        prompt = state.prompt,
+        promptUpdated = state.promptUpdated,
+        promptPlaceId = state.promptPlaceId,
+        placeId = state.timerPlaceId,
+        timerStartedAt = state.timerStartedAt,
+        timerEnd = state.timerEnd,
+    )
+
+internal fun watchCommandSentFeedback(sent: Boolean): String =
+    if (sent) "Sent to phone" else "Phone not nearby"
+
+internal enum class WatchCommandAction {
+    StartTimer,
+    DismissArrival,
+    KeepTimer,
+    CancelTimer,
+    MarkDone,
+    ExtendTimer,
+}
+
+internal fun watchCommandSentFeedback(
+    action: WatchCommandAction,
+    sent: Boolean,
+): String {
+    if (!sent) return "Phone not nearby"
+    return when (action) {
+        WatchCommandAction.StartTimer -> "Start sent to phone"
+        WatchCommandAction.DismissArrival -> "Not now sent to phone"
+        WatchCommandAction.KeepTimer -> "Keep sent to phone"
+        WatchCommandAction.CancelTimer -> "Cancel sent to phone"
+        WatchCommandAction.MarkDone -> "Done sent to phone"
+        WatchCommandAction.ExtendTimer -> "Extend sent to phone"
+    }
+}
+
+internal data class WatchPromptVisibility(
+    val startPrompt: Boolean,
+    val leavingEarly: Boolean,
+    val timeUp: Boolean,
+)
+
+internal fun watchPromptVisibility(
+    prompt: String,
+    timerEnd: Long,
+    lastUpdated: Long,
+    now: Long,
+): WatchPromptVisibility {
+    val running = timerEnd > now
+    val promptFresh = !WatchSyncCopy.isStale(lastUpdated, now)
+    val finishedLocally = timerEnd > 0L && timerEnd <= now
+    return WatchPromptVisibility(
+        startPrompt = prompt == PROMPT_START_TIMER && promptFresh,
+        leavingEarly = prompt == PROMPT_LEAVE_EARLY && running && promptFresh,
+        timeUp = (prompt == PROMPT_TIME_UP && promptFresh) || finishedLocally,
+    )
+}
 
 @Composable
 fun WatchScreen() {
@@ -182,11 +439,16 @@ fun WatchScreen() {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var feedback by remember { mutableStateOf("") }
     var feedbackKey by remember { mutableLongStateOf(0L) }
+    var notificationsAllowed by remember { mutableStateOf(hasWatchNotificationPermission(context)) }
     val pagerState = rememberPagerState(pageCount = { WatchPage.entries.size })
 
     fun showFeedback(message: String) {
         feedback = message
         feedbackKey += 1L
+    }
+
+    suspend fun requestFreshPhoneState() {
+        sendPhoneCommand(context, "/dwell/request_state")
     }
 
     LaunchedEffect(Unit) {
@@ -203,6 +465,7 @@ fun WatchScreen() {
         while (true) {
             now = System.currentTimeMillis()
             state = readWatchState(context)
+            notificationsAllowed = hasWatchNotificationPermission(context)
             delay(1000)
         }
     }
@@ -220,15 +483,11 @@ fun WatchScreen() {
     fun cancelTimer() {
         showFeedback("Cancelling...")
         scope.launch {
-            val sent = sendPhoneCommand(context, "/dwell/cancel")
-            showFeedback(if (sent) "Cancelled" else "Phone not nearby")
+            val sent = sendPhoneCommand(context, "/dwell/cancel", timerCommandPayload(state))
             if (sent) {
-                prefs(context).edit()
-                    .putLong("timer_end", 0L)
-                    .putLong("timer_started_at", 0L)
-                    .apply()
-                state = readWatchState(context)
+                requestFreshPhoneState()
             }
+            showFeedback(watchCommandSentFeedback(WatchCommandAction.CancelTimer, sent))
         }
     }
 
@@ -236,88 +495,73 @@ fun WatchScreen() {
         showFeedback("Starting...")
         scope.launch {
             val sent = sendPhoneCommand(context, "/dwell/start", promptCommandPayload(state))
-            showFeedback(if (sent) "Started" else "Phone not nearby")
             if (sent) {
-                val nowMs = System.currentTimeMillis()
-                prefs(context).edit()
-                    .putString("prompt", PROMPT_NONE)
-                    .putLong("prompt_updated", nowMs)
-                    .putLong("timer_started_at", nowMs)
-                    .putLong("timer_end", nowMs + state.durationMinutes * 60_000L)
-                    .apply()
-                state = readWatchState(context)
+                requestFreshPhoneState()
             }
+            showFeedback(watchCommandSentFeedback(WatchCommandAction.StartTimer, sent))
         }
     }
 
     fun dismissArrival() {
         showFeedback("Not now")
         val payload = promptCommandPayload(state)
-        prefs(context).edit()
-            .putString("prompt", PROMPT_NONE)
-            .putLong("prompt_updated", System.currentTimeMillis())
-            .apply()
-        state = readWatchState(context)
         scope.launch {
             val sent = sendPhoneCommand(context, "/dwell/dismiss_arrival", payload)
-            showFeedback(if (sent) "Dismissed" else "Dismissed locally")
+            if (sent) {
+                requestFreshPhoneState()
+            }
+            showFeedback(watchCommandSentFeedback(WatchCommandAction.DismissArrival, sent))
         }
     }
 
     fun keepTimer() {
         showFeedback("Keeping timer...")
         val payload = promptCommandPayload(state)
-        prefs(context).edit()
-            .putString("prompt", PROMPT_NONE)
-            .putLong("prompt_updated", System.currentTimeMillis())
-            .apply()
-        state = readWatchState(context)
         scope.launch {
             val sent = sendPhoneCommand(context, "/dwell/keep", payload)
-            showFeedback(if (sent) "Keeping timer" else "Still counting down")
+            if (sent) {
+                requestFreshPhoneState()
+            }
+            showFeedback(watchCommandSentFeedback(WatchCommandAction.KeepTimer, sent))
         }
     }
 
     fun markDone() {
         showFeedback("Marking done...")
         scope.launch {
-            val sent = sendPhoneCommand(context, "/dwell/done", promptCommandPayload(state))
-            showFeedback(if (sent) "Done" else "Phone not nearby")
+            val sent = sendPhoneCommand(context, "/dwell/done", doneCommandPayload(state))
             if (sent) {
-                prefs(context).edit()
-                    .putString("prompt", PROMPT_NONE)
-                    .putLong("prompt_updated", System.currentTimeMillis())
-                    .putLong("timer_end", 0L)
-                    .putLong("timer_started_at", 0L)
-                    .apply()
-                WatchNotifications.clearTimer(context)
-                state = readWatchState(context)
+                requestFreshPhoneState()
             }
+            showFeedback(watchCommandSentFeedback(WatchCommandAction.MarkDone, sent))
         }
     }
 
     fun extendTimer(minutes: Int) {
         showFeedback("Extending...")
         scope.launch {
-            val sent = sendPhoneCommand(context, "/dwell/extend", minutes.toString())
-            showFeedback(if (sent) "+${minutes}m added" else "Phone not nearby")
+            val sent = sendPhoneCommand(
+                context,
+                "/dwell/extend",
+                extendCommandPayload(state, minutes),
+            )
             if (sent) {
-                val base = maxOf(state.timerEnd, System.currentTimeMillis())
-                prefs(context).edit()
-                    .putLong("timer_end", base + minutes * 60_000L)
-                    .putString("prompt", PROMPT_NONE)
-                    .putLong("prompt_updated", System.currentTimeMillis())
-                    .apply()
-                state = readWatchState(context)
+                requestFreshPhoneState()
             }
+            showFeedback(watchCommandSentFeedback(WatchCommandAction.ExtendTimer, sent))
         }
     }
 
     val running = state.timerEnd > now
-    val finishedLocally = state.timerEnd > 0L && state.timerEnd <= now
-    val startPrompt = state.prompt == PROMPT_START_TIMER
-    val leavingEarly = state.prompt == PROMPT_LEAVE_EARLY && running
-    val timeUp = state.prompt == PROMPT_TIME_UP || finishedLocally
+    val promptVisibility = watchPromptVisibility(
+        prompt = state.prompt,
+        timerEnd = state.timerEnd,
+        lastUpdated = state.lastUpdated,
+        now = now,
+    )
+    val startPrompt = promptVisibility.startPrompt
+    val leavingEarly = promptVisibility.leavingEarly
+    val timeUp = promptVisibility.timeUp
 
     BackHandler(enabled = pagerState.currentPage != WatchPage.Glance.ordinal) {
         scope.launch { pagerState.animateScrollToPage(WatchPage.Glance.ordinal) }
@@ -402,6 +646,11 @@ fun WatchScreen() {
                     state = state,
                     now = now,
                     feedback = feedback,
+                    notificationsAllowed = notificationsAllowed,
+                    onAllowNotifications = {
+                        val opened = requestWatchNotificationPermission(context)
+                        showFeedback(watchNotificationPermissionFeedback(opened))
+                    },
                 )
             }
         }
@@ -416,6 +665,10 @@ private fun StartTimerPromptContent(
     onStart: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val placeLabel = watchPromptDisplayPlaceLabel(
+        promptPlaceLabel = state.promptPlaceLabel,
+        placeLabel = state.placeLabel,
+    )
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -424,13 +677,13 @@ private fun StartTimerPromptContent(
         StatusDot(active = true)
         Spacer(Modifier.height(10.dp))
         Text(
-            if (switching) "Switch timer?" else "Start timer?",
+            startPromptTitle(placeLabel, switching),
             style = MaterialTheme.typography.title2,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
         )
         Text(
-            state.placeLabel.shortPlace().ifBlank { "Arrived" },
+            startPromptSubtitle(placeLabel, switching),
             style = MaterialTheme.typography.caption1,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.72f),
             maxLines = 1,
@@ -464,6 +717,10 @@ private fun ActiveGlanceContent(
     onOpenActions: () -> Unit,
 ) {
     val left = (state.timerEnd - now).coerceAtLeast(0L)
+    val placeLabel = watchTimerDisplayPlaceLabel(
+        timerPlaceLabel = state.timerPlaceLabel,
+        placeLabel = state.placeLabel,
+    )
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -473,13 +730,15 @@ private fun ActiveGlanceContent(
         StatusDot(active = true)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Timer active",
+            activeTimerTitle(placeLabel),
             style = MaterialTheme.typography.title2,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
         Text(
-            state.placeLabel.shortPlace(),
+            activeTimerSubtitle(placeLabel),
             style = MaterialTheme.typography.caption1,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.72f),
             maxLines = 1,
@@ -529,6 +788,10 @@ private fun FocusTimerContent(
     val left = (state.timerEnd - now).coerceAtLeast(0L)
     val total = totalTimerMillis(state)
     val progress = if (total > 0L) left.toFloat() / total.toFloat() else 0f
+    val placeLabel = watchTimerDisplayPlaceLabel(
+        timerPlaceLabel = state.timerPlaceLabel,
+        placeLabel = state.placeLabel,
+    )
 
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -537,7 +800,7 @@ private fun FocusTimerContent(
         BigTimerFace(
             progress = progress.coerceIn(0f, 1f),
             primary = formatRemaining(left),
-            place = state.placeLabel.ifBlank { "Dwell" },
+            place = watchTimerPlaceLabel(placeLabel, fallback = "Dwell"),
             footer = "Ends ${formatTime(state.timerEnd)}",
             modifier = Modifier.fillMaxSize(),
             onClick = onOpenActions,
@@ -560,6 +823,10 @@ private fun TimerActionsContent(
     onCancel: () -> Unit,
     onOpenTimer: () -> Unit,
 ) {
+    val placeLabel = watchTimerDisplayPlaceLabel(
+        timerPlaceLabel = state.timerPlaceLabel,
+        placeLabel = state.placeLabel,
+    )
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -569,7 +836,7 @@ private fun TimerActionsContent(
     ) {
         Text("Extend", style = MaterialTheme.typography.title2, fontWeight = FontWeight.Bold)
         Text(
-            state.placeLabel.ifBlank { "Dwell timer" },
+            watchTimerPlaceLabel(placeLabel, fallback = "Dwell timer"),
             style = MaterialTheme.typography.caption2,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.72f),
             maxLines = 1,
@@ -603,6 +870,10 @@ private fun LeavingEarlyContent(
     onKeep: () -> Unit,
     onCancel: () -> Unit,
 ) {
+    val placeLabel = watchTimerDisplayPlaceLabel(
+        timerPlaceLabel = state.timerPlaceLabel,
+        placeLabel = state.placeLabel,
+    )
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -611,7 +882,7 @@ private fun LeavingEarlyContent(
         StatusDot(active = true)
         Spacer(Modifier.height(10.dp))
         Text(
-            "Leaving ${state.placeLabel.shortPlace()}?",
+            "Leaving ${placeLabel.shortPlace()}?",
             style = MaterialTheme.typography.title2,
             fontWeight = FontWeight.Bold,
             maxLines = 2,
@@ -648,6 +919,10 @@ private fun TimeUpContent(
     onDone: () -> Unit,
     onExtend: (Int) -> Unit,
 ) {
+    val placeLabel = watchTimerDisplayPlaceLabel(
+        timerPlaceLabel = state.timerPlaceLabel,
+        placeLabel = state.placeLabel,
+    )
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -655,9 +930,14 @@ private fun TimeUpContent(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("Time's up", style = MaterialTheme.typography.title1, fontWeight = FontWeight.Bold)
         Text(
-            state.placeLabel.ifBlank { "Dwell timer" },
+            timeUpScreenTitle(placeLabel),
+            style = MaterialTheme.typography.title1,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            timeUpScreenSubtitle(placeLabel),
             style = MaterialTheme.typography.caption1,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.72f),
             maxLines = 1,
@@ -687,19 +967,25 @@ private fun ReadyContent(
     state: WatchState,
     now: Long,
     feedback: String,
+    notificationsAllowed: Boolean,
+    onAllowNotifications: () -> Unit,
 ) {
-    val title = when {
-        state.needsSetup -> "Setup needed"
-        state.armed -> "Ready"
-        state.hasPlace -> "Setup paused"
-        else -> "Setup needed"
-    }
-    val detail = when {
-        state.needsSetup -> "Open phone app"
-        state.armed -> "Waiting for arrival"
-        state.hasPlace -> "Arm it on your phone"
-        else -> "Choose a place on phone"
-    }
+    val title = watchReadyTitle(
+        hasPlace = state.hasPlace,
+        armed = state.armed,
+        needsSetup = state.needsSetup,
+        lastUpdated = state.lastUpdated,
+        now = now,
+        livePlaceCount = state.registeredPlaceCount,
+    )
+    val detail = watchReadyDetail(
+        hasPlace = state.hasPlace,
+        armed = state.armed,
+        needsSetup = state.needsSetup,
+        lastUpdated = state.lastUpdated,
+        now = now,
+        livePlaceCount = state.registeredPlaceCount,
+    )
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -718,7 +1004,7 @@ private fun ReadyContent(
         if (state.hasPlace) {
             Spacer(Modifier.height(8.dp))
             Text(
-                state.placeLabel.ifBlank { "Selected place" },
+                watchReadyPlaceLabel(state.placeLabel),
                 style = MaterialTheme.typography.body1,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -742,6 +1028,15 @@ private fun ReadyContent(
                 )
             },
         )
+        val notificationAction = watchNotificationPermissionActionLabel(notificationsAllowed)
+        if (notificationAction.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            MiniPill(
+                label = notificationAction,
+                onClick = onAllowNotifications,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
@@ -980,20 +1275,97 @@ private fun formatDurationMinutes(minutes: Int): String {
     }
 }
 
+internal fun startPromptTitle(placeLabel: String, switching: Boolean): String {
+    val place = placeLabel.shortPlaceOrBlank()
+    return when {
+        switching && place.isNotBlank() -> "Switch to $place?"
+        switching -> "Switch timer?"
+        place.isNotBlank() -> "Start at $place?"
+        else -> "Start timer?"
+    }
+}
+
+internal fun startPromptSubtitle(placeLabel: String, switching: Boolean): String {
+    val place = placeLabel.shortPlaceOrBlank()
+    return when {
+        switching && place.isNotBlank() -> "New timer place"
+        switching -> "Choose new timer"
+        place.isNotBlank() -> place
+        else -> "Arrived"
+    }
+}
+
+internal fun watchPromptDisplayPlaceLabel(
+    promptPlaceLabel: String,
+    placeLabel: String,
+): String =
+    promptPlaceLabel.ifBlank { placeLabel }
+
+internal fun watchTimerDisplayPlaceLabel(
+    timerPlaceLabel: String,
+    placeLabel: String,
+): String =
+    timerPlaceLabel.ifBlank { placeLabel }
+
+internal fun timeUpScreenTitle(placeLabel: String): String {
+    val place = placeLabel.shortPlaceOrBlank()
+    return if (place.isNotBlank()) "Time's up at $place" else "Time's up"
+}
+
+internal fun timeUpScreenSubtitle(placeLabel: String): String =
+    if (placeLabel.shortPlaceOrBlank().isNotBlank()) "Timer complete" else "Dwell timer"
+
+internal fun activeTimerTitle(placeLabel: String): String {
+    val place = placeLabel.shortPlaceOrBlank()
+    return if (place.isNotBlank()) "$place timer" else "Timer active"
+}
+
+internal fun activeTimerSubtitle(placeLabel: String): String =
+    if (placeLabel.shortPlaceOrBlank().isNotBlank()) "Timer active" else "Dwell timer"
+
+internal fun watchReadyPlaceLabel(placeLabel: String): String =
+    placeLabel.shortPlace()
+
+internal fun watchTimerPlaceLabel(placeLabel: String, fallback: String): String =
+    placeLabel.shortPlaceOrBlank().ifBlank { fallback }
+
 private fun readyMetaText(state: WatchState): String =
+    watchReadyMetaText(
+        needsSetup = state.needsSetup,
+        monitoringError = state.monitoringError,
+        registeredPlaceCount = state.registeredPlaceCount,
+        armedPlaceCount = state.armedPlaceCount,
+        durationMinutes = state.durationMinutes,
+    )
+
+internal fun watchReadyMetaText(
+    needsSetup: Boolean,
+    monitoringError: String,
+    registeredPlaceCount: Int,
+    armedPlaceCount: Int,
+    durationMinutes: Int,
+): String =
     when {
-        state.needsSetup && state.monitoringError.isNotBlank() -> state.monitoringError
-        state.needsSetup -> "Monitoring not live"
-        state.registeredPlaceCount > 1 -> "${state.registeredPlaceCount} places live"
-        state.armedPlaceCount > 1 -> "${state.armedPlaceCount} places armed"
-        else -> "${formatDurationMinutes(state.durationMinutes)} default"
+        needsSetup && monitoringError.isNotBlank() -> monitoringError
+        needsSetup -> "Needs setup"
+        registeredPlaceCount > 1 -> "$registeredPlaceCount places live"
+        armedPlaceCount > 1 -> "$armedPlaceCount places monitoring"
+        else -> "${formatDurationMinutes(durationMinutes)} default"
     }
 
 private fun formatTime(timeMillis: Long): String =
     DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(timeMillis))
 
+private fun String.shortPlaceOrBlank(): String =
+    substringBefore(",")
+        .trim()
+        .takeUnless { placeholderPlaceLabels.contains(it) }
+        .orEmpty()
+
 private fun String.shortPlace(): String =
     ifBlank { "this place" }
         .substringBefore(",")
         .trim()
+        .takeUnless { placeholderPlaceLabels.contains(it) }
+        .orEmpty()
         .ifBlank { "this place" }

@@ -170,10 +170,13 @@ private fun tileState(context: Context): TileState {
     val p = context.getSharedPreferences("dwell", Context.MODE_PRIVATE)
     val hasPlace = p.getBoolean("has_place", false)
     val place = p.getString("place_label", "").orEmpty()
+    val promptPlace = p.getString("prompt_place_label", "").orEmpty()
+    val timerPlace = p.getString("timer_place_label", "").orEmpty()
     val armed = p.getBoolean("armed", false)
     val needsSetup = p.getBoolean("needs_setup", false)
     val registeredPlaceCount = p.getInt("registered_place_count", 0)
     val timerEnd = p.getLong("timer_end", 0L)
+    val lastUpdated = p.getLong("updated", 0L)
     val prompt = p.getString("prompt", TileStateCalculator.PROMPT_NONE)
         ?: TileStateCalculator.PROMPT_NONE
     val now = System.currentTimeMillis()
@@ -181,11 +184,14 @@ private fun tileState(context: Context): TileState {
     return TileStateCalculator.state(
         hasPlace = hasPlace,
         placeLabel = place,
+        promptPlaceLabel = promptPlace,
+        timerPlaceLabel = timerPlace,
         armed = armed,
         needsSetup = needsSetup,
         registeredPlaceCount = registeredPlaceCount,
         timerEnd = timerEnd,
         prompt = prompt,
         now = now,
+        lastUpdated = lastUpdated,
     )
 }

@@ -18,14 +18,23 @@ class GeofenceReceiver : BroadcastReceiver() {
 
         val triggers = triggersForEvent(context, event)
         if (triggers.isEmpty()) return
-        val zonePlaces = triggers
-            .filter { it.type == DwellGeofenceType.ZONE }
-            .map { it.place }
-            .distinctBy { it.id }
-        val approachPlaces = triggers
-            .filter { it.type == DwellGeofenceType.APPROACH }
-            .map { it.place }
-            .distinctBy { it.id }
+        val eventLocation = event.triggeringLocation
+        val zonePlaces = prioritizeTriggeredPlaces(
+            places = triggers
+                .filter { it.type == DwellGeofenceType.ZONE }
+                .map { it.place }
+                .distinctBy { it.id },
+            latitude = eventLocation?.latitude,
+            longitude = eventLocation?.longitude,
+        )
+        val approachPlaces = prioritizeTriggeredPlaces(
+            places = triggers
+                .filter { it.type == DwellGeofenceType.APPROACH }
+                .map { it.place }
+                .distinctBy { it.id },
+            latitude = eventLocation?.latitude,
+            longitude = eventLocation?.longitude,
+        )
 
         when (event.geofenceTransition) {
             Geofence.GEOFENCE_TRANSITION_ENTER -> {
@@ -33,8 +42,12 @@ class GeofenceReceiver : BroadcastReceiver() {
                 // bouncing in and out of the zone).
                 if (TimerController.isRunning(context)) {
                     val currentPlaceId = Prefs.getTimerPlaceId(context)
-                    val newPlace = zonePlaces.firstOrNull { it.id != currentPlaceId }
+                    val newPlace = switchPromptTargetForTriggeredEnter(
+                        zonePlaces = zonePlaces,
+                        currentPlaceId = currentPlaceId,
+                    )
                     if (currentPlaceId.isNotBlank() && newPlace != null) {
+                        if (Prefs.isSwitchPromptSuppressed(context, newPlace.id)) return
                         val currentPlace = Prefs.getPlace(context, currentPlaceId)
                         Prefs.setWatchPrompt(
                             context,
@@ -54,11 +67,10 @@ class GeofenceReceiver : BroadcastReceiver() {
                 if (zonePlaces.isEmpty()) {
                     val pending = goAsync()
                     val appContext = context.applicationContext
-                    val approachPlaceId = approachPlaces.singleOrNull()?.id
                     DwellArrivalEngine.runApproachProbe(
                         context = appContext,
                         triggerMotion = Prefs.getMotion(appContext),
-                        placeId = approachPlaceId,
+                        placeIds = approachPlaces.map { it.id },
                         fallbackLocation = event.triggeringLocation,
                         onComplete = { pending.finish() },
                     )
@@ -67,19 +79,12 @@ class GeofenceReceiver : BroadcastReceiver() {
 
                 val pending = goAsync()
                 val appContext = context.applicationContext
-                fun runNext(index: Int) {
-                    if (index >= zonePlaces.size || TimerController.isRunning(appContext)) {
-                        pending.finish()
-                        return
-                    }
-                    DwellArrivalEngine.runGeofenceEnterProbe(
-                        context = appContext,
-                        placeId = zonePlaces[index].id,
-                        fallbackLocation = event.triggeringLocation,
-                        onComplete = { runNext(index + 1) },
-                    )
-                }
-                runNext(0)
+                DwellArrivalEngine.runGeofenceEnterProbe(
+                    context = appContext,
+                    placeIds = zonePlaces.map { it.id },
+                    fallbackLocation = event.triggeringLocation,
+                    onComplete = { pending.finish() },
+                )
             }
             Geofence.GEOFENCE_TRANSITION_EXIT -> {
                 if (zonePlaces.isEmpty()) return
@@ -87,9 +92,7 @@ class GeofenceReceiver : BroadcastReceiver() {
                 if (!TimerController.isRunning(context)) return
 
                 val timerPlaceId = Prefs.getTimerPlaceId(context)
-                val exitPlaces = zonePlaces.filter { place ->
-                    timerPlaceId.isBlank() || timerPlaceId == place.id
-                }
+                val exitPlaces = exitProbePlacesForTimer(zonePlaces, timerPlaceId)
                 if (exitPlaces.isEmpty()) return
 
                 val pending = goAsync()
@@ -152,21 +155,32 @@ class GeofenceReceiver : BroadcastReceiver() {
             .orEmpty()
         if (triggered.isNotEmpty()) return triggered
 
-        val fallbackRequest = event.triggeringLocation?.let {
-            inferredRequestForLocation(
+        val fallbackRequests = event.triggeringLocation?.let {
+            inferredRequestsForLocation(
                 places = Prefs.getArmedPlaces(context),
                 latitude = it.latitude,
                 longitude = it.longitude,
                 transition = event.geofenceTransition,
             )
-        } ?: return emptyList()
-        val place = Prefs.getPlace(context, fallbackRequest.placeId) ?: return emptyList()
-        return listOf(TriggeredPlace(place, fallbackRequest.type))
+        }.orEmpty()
+        return fallbackRequests.mapNotNull { request ->
+            val place = Prefs.getPlace(context, request.placeId) ?: return@mapNotNull null
+            TriggeredPlace(place, request.type)
+        }
     }
 
     companion object {
         internal fun geofenceEventErrorMessage(errorCode: Int): String =
-            "Geofence event error: ${GeofenceStatusCodes.getStatusCodeString(errorCode)}"
+            when (errorCode) {
+                GeofenceStatusCodes.GEOFENCE_NOT_AVAILABLE ->
+                    "Monitoring event error: location services unavailable"
+                GeofenceStatusCodes.GEOFENCE_TOO_MANY_GEOFENCES ->
+                    "Monitoring event error: too many monitored places"
+                GeofenceStatusCodes.GEOFENCE_TOO_MANY_PENDING_INTENTS ->
+                    "Monitoring event error: too many monitoring requests"
+                else ->
+                    "Monitoring event error: code $errorCode"
+            }
 
         internal fun geofenceEventErrorDetail(errorCode: Int): String =
             "event error $errorCode ${GeofenceStatusCodes.getStatusCodeString(errorCode)}"
@@ -176,42 +190,98 @@ class GeofenceReceiver : BroadcastReceiver() {
             latitude: Double?,
             longitude: Double?,
             transition: Int,
-        ): DwellGeofenceRequest? {
+        ): DwellGeofenceRequest? =
+            inferredRequestsForLocation(
+                places = places,
+                latitude = latitude,
+                longitude = longitude,
+                transition = transition,
+            ).firstOrNull()
+
+        internal fun inferredRequestsForLocation(
+            places: List<DwellPlace>,
+            latitude: Double?,
+            longitude: Double?,
+            transition: Int,
+        ): List<DwellGeofenceRequest> {
             if (
                 latitude == null ||
                 longitude == null ||
                 !DwellPlace.hasValidCoordinates(latitude, longitude)
             ) {
-                return null
+                return emptyList()
             }
 
             val candidates = places
-                .asSequence()
                 .filter { it.monitoringEnabled }
                 .map { place -> place to place.distanceMetersTo(latitude, longitude) }
-                .toList()
+                .sortedWith(
+                    compareBy<Pair<DwellPlace, Float>> { it.second }
+                        .thenBy { it.first.createdAtMillis }
+                        .thenBy { it.first.safeLabel.lowercase() }
+                        .thenBy { it.first.id },
+                )
 
             if (transition == Geofence.GEOFENCE_TRANSITION_EXIT) {
                 return candidates
                     .filter { (place, distance) -> distance <= DwellRadius.approachRadius(place.radiusMeters) }
-                    .minByOrNull { (_, distance) -> distance }
-                    ?.first
-                    ?.let { DwellGeofenceRequest(it.id, DwellGeofenceType.ZONE) }
+                    .map { (place, _) -> DwellGeofenceRequest(place.id, DwellGeofenceType.ZONE) }
             }
 
-            val zone = candidates
+            val zoneRequests = candidates
                 .filter { (place, distance) -> distance <= DwellRadius.normalize(place.radiusMeters) }
-                .minByOrNull { (_, distance) -> distance }
-                ?.first
-            if (zone != null) {
-                return DwellGeofenceRequest(zone.id, DwellGeofenceType.ZONE)
-            }
+                .map { (place, _) -> DwellGeofenceRequest(place.id, DwellGeofenceType.ZONE) }
+            if (zoneRequests.isNotEmpty()) return zoneRequests
 
             return candidates
                 .filter { (place, distance) -> distance <= DwellRadius.approachRadius(place.radiusMeters) }
-                .minByOrNull { (_, distance) -> distance }
-                ?.first
-                ?.let { DwellGeofenceRequest(it.id, DwellGeofenceType.APPROACH) }
+                .map { (place, _) -> DwellGeofenceRequest(place.id, DwellGeofenceType.APPROACH) }
         }
+
+        internal fun prioritizeTriggeredPlaces(
+            places: List<DwellPlace>,
+            latitude: Double?,
+            longitude: Double?,
+        ): List<DwellPlace> {
+            val distinctPlaces = places
+                .filter { it.monitoringEnabled }
+                .distinctBy { it.id }
+            if (
+                latitude == null ||
+                longitude == null ||
+                !DwellPlace.hasValidCoordinates(latitude, longitude)
+            ) {
+                return distinctPlaces.sortedWith(
+                    compareBy<DwellPlace> { it.createdAtMillis }
+                        .thenBy { it.safeLabel.lowercase() }
+                        .thenBy { it.id },
+                )
+            }
+
+            return distinctPlaces.sortedWith(
+                compareBy<DwellPlace> { it.distanceMetersTo(latitude, longitude) }
+                    .thenBy { it.createdAtMillis }
+                    .thenBy { it.safeLabel.lowercase() }
+                    .thenBy { it.id },
+            )
+        }
+
+        internal fun switchPromptTargetForTriggeredEnter(
+            zonePlaces: List<DwellPlace>,
+            currentPlaceId: String,
+        ): DwellPlace? {
+            val runningPlaceId = currentPlaceId.takeIf { it.isNotBlank() } ?: return null
+            if (zonePlaces.any { it.id == runningPlaceId }) return null
+            return zonePlaces.firstOrNull { it.id != runningPlaceId }
+        }
+
+        internal fun exitProbePlacesForTimer(
+            zonePlaces: List<DwellPlace>,
+            timerPlaceId: String,
+        ): List<DwellPlace> =
+            timerPlaceId
+                .takeIf { it.isNotBlank() }
+                ?.let { runningPlaceId -> zonePlaces.filter { it.id == runningPlaceId } }
+                .orEmpty()
     }
 }

@@ -22,9 +22,9 @@ data class BatteryReliabilityStatus(
             isIgnoringOptimizations ->
                 "Android is allowing Dwell to run without Doze battery restrictions."
             isKnownAggressiveOem ->
-                "$manufacturer may delay background arrival checks. Set Dwell to unrestricted battery in Android settings for best reliability."
+                "$manufacturer may delay background arrival checks. Open app info, then Battery, and choose Unrestricted."
             else ->
-                "Android may delay background arrival checks while battery optimization is enabled."
+                "Android may delay background arrival checks while battery optimization is enabled. Open app info, then Battery, and choose Unrestricted."
         }
 }
 

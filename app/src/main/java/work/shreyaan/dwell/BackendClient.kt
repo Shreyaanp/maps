@@ -248,7 +248,7 @@ object BackendClient {
                 return@runCatching null
             }
             BackendZone(
-                label = zone.optString("label").ifBlank { "Saved zone" },
+                label = zone.optString("label").ifBlank { "Saved place" },
                 lat = lat,
                 lon = lon,
                 radiusMeters = DwellRadius.normalize(radius.toFloat()),

@@ -38,7 +38,7 @@ class GeofenceManagerTest {
             GeofenceManager.shouldRefreshOnAppOpen(
                 armedPlaceIds = listOf("office"),
                 registeredPlaceIds = setOf("office"),
-                monitoringError = "Geofence registration failed",
+                monitoringError = "Monitoring setup failed",
                 lastUpdatedMillis = 10_000L,
                 nowMillis = 20_000L,
             )
@@ -74,6 +74,105 @@ class GeofenceManagerTest {
     }
 
     @Test
+    fun appOpenReportsSetupNeededBeforeHealthySkipWhenArmed() {
+        assertTrue(
+            GeofenceManager.shouldReportSetupNeededOnAppOpen(
+                armedPlaceIds = listOf("office"),
+                hasSetupIssue = true,
+            )
+        )
+        assertFalse(
+            GeofenceManager.shouldReportSetupNeededOnAppOpen(
+                armedPlaceIds = emptyList(),
+                hasSetupIssue = true,
+            )
+        )
+        assertFalse(
+            GeofenceManager.shouldReportSetupNeededOnAppOpen(
+                armedPlaceIds = listOf("office"),
+                hasSetupIssue = false,
+            )
+        )
+    }
+
+    @Test
+    fun pausedPlaceClearsOnlyItsMonitoringPrompt() {
+        assertTrue(
+            GeofenceManager.shouldClearMonitoringPromptForPausedPlace(
+                prompt = Prefs.WATCH_PROMPT_START_TIMER,
+                promptPlaceId = "office",
+                pausedPlaceId = "office",
+            )
+        )
+        assertTrue(
+            GeofenceManager.shouldClearMonitoringPromptForPausedPlace(
+                prompt = Prefs.WATCH_PROMPT_LEAVE_EARLY,
+                promptPlaceId = "office",
+                pausedPlaceId = "office",
+            )
+        )
+        assertFalse(
+            GeofenceManager.shouldClearMonitoringPromptForPausedPlace(
+                prompt = Prefs.WATCH_PROMPT_START_TIMER,
+                promptPlaceId = "gym",
+                pausedPlaceId = "office",
+            )
+        )
+    }
+
+    @Test
+    fun allPlacesPausedClearsMonitoringPromptsButNotTimeUp() {
+        assertTrue(
+            GeofenceManager.shouldClearMonitoringPromptWhenAllPlacesPaused(
+                Prefs.WATCH_PROMPT_START_TIMER,
+            )
+        )
+        assertTrue(
+            GeofenceManager.shouldClearMonitoringPromptWhenAllPlacesPaused(
+                Prefs.WATCH_PROMPT_LEAVE_EARLY,
+            )
+        )
+        assertFalse(
+            GeofenceManager.shouldClearMonitoringPromptWhenAllPlacesPaused(
+                Prefs.WATCH_PROMPT_TIME_UP,
+            )
+        )
+        assertFalse(
+            GeofenceManager.shouldClearMonitoringPromptWhenAllPlacesPaused(
+                Prefs.WATCH_PROMPT_NONE,
+            )
+        )
+    }
+
+    @Test
+    fun setupNotificationClearsOnlyAfterHealthyMonitoringRecovery() {
+        assertTrue(
+            GeofenceManager.shouldClearSetupNotificationAfterRefresh(
+                ok = true,
+                error = null,
+            )
+        )
+        assertTrue(
+            GeofenceManager.shouldClearSetupNotificationAfterRefresh(
+                ok = true,
+                error = "",
+            )
+        )
+        assertFalse(
+            GeofenceManager.shouldClearSetupNotificationAfterRefresh(
+                ok = false,
+                error = "Background location permission is needed",
+            )
+        )
+        assertFalse(
+            GeofenceManager.shouldClearSetupNotificationAfterRefresh(
+                ok = true,
+                error = "Saved place has invalid location",
+            )
+        )
+    }
+
+    @Test
     fun registrablePlacesKeepOnlyEnabledPlacesWithValidCoordinatesAndIds() {
         val valid = testPlace("office")
         val disabled = testPlace("gym", monitoringEnabled = false)
@@ -97,6 +196,104 @@ class GeofenceManagerTest {
         assertEquals(
             listOf(office, gym),
             GeofenceManager.registrablePlaces(listOf(office, gym)),
+        )
+    }
+
+    @Test
+    fun monitoringUpdateExplainsPlaceLimitBeforeMutatingState() {
+        val monitored = (0 until DwellPlace.MAX_MONITORED_PLACES).map { index ->
+            testPlace("place-$index", latitude = 17.0 + (index * 0.001))
+        }
+        val paused = testPlace(
+            id = "extra",
+            latitude = 18.0,
+            longitude = 79.0,
+            monitoringEnabled = false,
+        )
+
+        assertEquals(
+            "Dwell can monitor up to ${DwellPlace.MAX_MONITORED_PLACES} places. Pause another monitored place first.",
+            GeofenceManager.placeMonitoringUpdateError(
+                places = monitored + paused,
+                placeId = paused.id,
+                enabled = true,
+            ),
+        )
+    }
+
+    @Test
+    fun monitoringUpdateAllowsExistingMonitoredPlaceOrDisableAtLimit() {
+        val monitored = (0 until DwellPlace.MAX_MONITORED_PLACES).map { index ->
+            testPlace("place-$index", latitude = 17.0 + (index * 0.001))
+        }
+
+        assertEquals(
+            null,
+            GeofenceManager.placeMonitoringUpdateError(
+                places = monitored,
+                placeId = "place-0",
+                enabled = true,
+            ),
+        )
+        assertEquals(
+            null,
+            GeofenceManager.placeMonitoringUpdateError(
+                places = monitored,
+                placeId = "place-0",
+                enabled = false,
+            ),
+        )
+    }
+
+    @Test
+    fun monitoringUpdateExplainsMissingPlace() {
+        assertEquals(
+            "Saved place no longer exists",
+            GeofenceManager.placeMonitoringUpdateError(
+                places = listOf(testPlace("office")),
+                placeId = "gym",
+                enabled = true,
+            ),
+        )
+    }
+
+    @Test
+    fun armMonitoringUsesSameLimitPreflightAsPlaces() {
+        val monitored = (0 until DwellPlace.MAX_MONITORED_PLACES).map { index ->
+            testPlace("place-$index", latitude = 17.0 + (index * 0.001))
+        }
+        val paused = testPlace(
+            id = "extra",
+            latitude = 18.0,
+            longitude = 79.0,
+            monitoringEnabled = false,
+        )
+        val expected = "Dwell can monitor up to ${DwellPlace.MAX_MONITORED_PLACES} places. Pause another monitored place first."
+
+        assertEquals(
+            expected,
+            GeofenceManager.armMonitoringUpdateError(
+                places = monitored + paused,
+                activePlaceId = paused.id,
+            ),
+        )
+        assertEquals(
+            expected,
+            GeofenceManager.armMonitoringUpdateError(
+                places = monitored,
+                activePlaceId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun armMonitoringExplainsMissingExplicitPlace() {
+        assertEquals(
+            "Saved place no longer exists",
+            GeofenceManager.armMonitoringUpdateError(
+                places = listOf(testPlace("office")),
+                activePlaceId = "gym",
+            ),
         )
     }
 

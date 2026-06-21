@@ -77,6 +77,39 @@ class DwellInsightsTest {
         assertEquals(1, sessions.last().elapsedMinutes)
     }
 
+    @Test
+    fun timerSessionPlaceDoesNotInferPlaceForBlankTimerId() {
+        val sessionPlace = DwellInsights.timerSessionPlace(
+            timerPlaceId = "",
+            place = place("home", "Home"),
+        )
+
+        assertEquals("unknown_place", sessionPlace.placeId)
+        assertEquals("Dwell session", sessionPlace.placeLabel)
+    }
+
+    @Test
+    fun timerSessionPlaceUsesExplicitSavedPlace() {
+        val sessionPlace = DwellInsights.timerSessionPlace(
+            timerPlaceId = "office",
+            place = place("office", "Office"),
+        )
+
+        assertEquals("office", sessionPlace.placeId)
+        assertEquals("Office", sessionPlace.placeLabel)
+    }
+
+    @Test
+    fun timerSessionPlaceKeepsMissingExplicitIdGeneric() {
+        val sessionPlace = DwellInsights.timerSessionPlace(
+            timerPlaceId = "deleted",
+            place = null,
+        )
+
+        assertEquals("deleted", sessionPlace.placeId)
+        assertEquals("Dwell session", sessionPlace.placeLabel)
+    }
+
     private fun session(
         placeId: String,
         label: String,
@@ -95,6 +128,20 @@ class DwellInsightsTest {
             outcome = outcome,
         )
     }
+
+    private fun place(id: String, label: String): DwellPlace =
+        DwellPlace(
+            id = id,
+            label = label,
+            latitude = 12.0,
+            longitude = 77.0,
+            radiusMeters = 150f,
+            durationMinutes = 60,
+            monitoringEnabled = true,
+            autoStart = true,
+            createdAtMillis = 1000L,
+            updatedAtMillis = 1000L,
+        )
 
     private fun millis(
         year: Int,

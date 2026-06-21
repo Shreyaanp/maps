@@ -10,6 +10,10 @@ import com.google.android.gms.location.LocationServices
 
 object GeofenceManager {
     private const val APP_OPEN_REFRESH_INTERVAL_MS = 30 * 60 * 1_000L
+    private val refreshLock = Any()
+    private var refreshInFlight = false
+    private var refreshQueued = false
+    private val refreshCallbacks = mutableListOf<(Boolean, String?) -> Unit>()
 
     // Geofencing requires a MUTABLE PendingIntent so Play services can attach
     // the triggering event data.
@@ -25,13 +29,27 @@ object GeofenceManager {
         lat: Double,
         lon: Double,
         radiusMeters: Float,
+        placeId: String? = null,
         onResult: (Boolean, String?) -> Unit,
     ) {
         if (!DwellPlace.hasValidCoordinates(lat, lon)) {
             onResult(false, "Invalid place location")
             return
         }
-        val active = Prefs.getActivePlace(c)
+        val requestedPlaceId = placeId?.takeIf { it.isNotBlank() }
+        val places = Prefs.getPlaces(c)
+        val active = if (requestedPlaceId != null) {
+            places.firstOrNull { it.id == requestedPlaceId }
+        } else {
+            Prefs.getActivePlace(c)
+        }
+        armMonitoringUpdateError(
+            places = places,
+            activePlaceId = requestedPlaceId ?: active?.id,
+        )?.let { error ->
+            onResult(false, error)
+            return
+        }
         val place = if (active != null) {
             active.copy(
                 latitude = lat,
@@ -47,12 +65,13 @@ object GeofenceManager {
                 durationMinutes = Prefs.getDurationMinutes(c),
             )
         }.withMonitoring(true)
-        Prefs.upsertPlace(c, place, makeActive = true)
+        Prefs.upsertPlace(c, place, makeActive = requestedPlaceId == null)
         refresh(c, onResult)
     }
 
     fun disarm(c: Context, onResult: (Boolean) -> Unit) {
         Prefs.setAllPlacesArmed(c, false)
+        clearMonitoringPromptForAllPaused(c)
         LocationServices.getGeofencingClient(c)
             .removeGeofences(pendingIntent(c))
             .addOnCompleteListener { task ->
@@ -61,6 +80,7 @@ object GeofenceManager {
                 Prefs.clearRegisteredPlaces(c)
                 Prefs.setMonitoringError(c, null)
                 ActivityRecognitionManager.stop(c)
+                Notifications.clearSetup(c)
                 DwellDiagnostics.logLifecycle(
                     c,
                     source = "monitoring",
@@ -82,11 +102,46 @@ object GeofenceManager {
         enabled: Boolean,
         onResult: (Boolean, String?) -> Unit,
     ) {
+        placeMonitoringUpdateError(
+            places = Prefs.getPlaces(c),
+            placeId = placeId,
+            enabled = enabled,
+        )?.let { error ->
+            onResult(false, error)
+            return
+        }
         if (!Prefs.setPlaceArmed(c, placeId, enabled)) {
             onResult(false, "Could not update this place")
             return
         }
+        if (!enabled) {
+            clearMonitoringPromptForPausedPlace(c, placeId)
+            Prefs.clearArrivalRuntimeForPlace(c, placeId)
+            if (Prefs.getArmedPlaces(c).isEmpty()) {
+                clearMonitoringPromptForAllPaused(c)
+            }
+        }
         refresh(c, onResult)
+    }
+
+    private fun clearMonitoringPromptForPausedPlace(c: Context, placeId: String) {
+        if (
+            shouldClearMonitoringPromptForPausedPlace(
+                prompt = Prefs.getWatchPrompt(c),
+                promptPlaceId = Prefs.getPromptPlaceId(c),
+                pausedPlaceId = placeId,
+            )
+        ) {
+            Prefs.clearWatchPrompt(c)
+            Notifications.clearMonitoringPrompts(c)
+        }
+    }
+
+    private fun clearMonitoringPromptForAllPaused(c: Context) {
+        if (shouldClearMonitoringPromptWhenAllPlacesPaused(Prefs.getWatchPrompt(c))) {
+            Prefs.clearWatchPrompt(c)
+            Notifications.clearMonitoringPrompts(c)
+        }
     }
 
     fun refreshOnAppOpen(
@@ -94,6 +149,21 @@ object GeofenceManager {
         onResult: (Boolean, String?) -> Unit = { _, _ -> },
     ) {
         val armedPlaces = Prefs.getArmedPlaces(c)
+        val setupIssue = MonitoringPrerequisites.issueForContext(c)
+        if (
+            shouldReportSetupNeededOnAppOpen(
+                armedPlaceIds = armedPlaces.map { it.id },
+                hasSetupIssue = setupIssue != null,
+            )
+        ) {
+            MonitoringPrerequisites.markSetupNeeded(
+                context = c,
+                source = "monitoring",
+                issue = setupIssue!!,
+            )
+            onResult(false, setupIssue.error)
+            return
+        }
         val registrablePlaceIds = registrablePlaces(armedPlaces).map { it.id }
         if (
             !shouldRefreshOnAppOpen(
@@ -104,6 +174,7 @@ object GeofenceManager {
                 nowMillis = System.currentTimeMillis(),
             )
         ) {
+            Notifications.clearSetup(c)
             onResult(true, null)
             return
         }
@@ -133,15 +204,57 @@ object GeofenceManager {
         return nowMillis - lastUpdatedMillis >= refreshIntervalMs
     }
 
+    internal fun shouldReportSetupNeededOnAppOpen(
+        armedPlaceIds: Collection<String>,
+        hasSetupIssue: Boolean,
+    ): Boolean =
+        hasSetupIssue && armedPlaceIds.any { it.isNotBlank() }
+
+    internal fun shouldClearMonitoringPromptForPausedPlace(
+        prompt: String,
+        promptPlaceId: String,
+        pausedPlaceId: String,
+    ): Boolean =
+        isMonitoringPrompt(prompt) &&
+            pausedPlaceId.isNotBlank() &&
+            promptPlaceId == pausedPlaceId
+
+    internal fun shouldClearMonitoringPromptWhenAllPlacesPaused(prompt: String): Boolean =
+        isMonitoringPrompt(prompt)
+
+    internal fun shouldClearSetupNotificationAfterRefresh(
+        ok: Boolean,
+        error: String?,
+    ): Boolean =
+        ok && error.isNullOrBlank()
+
+    private fun isMonitoringPrompt(prompt: String): Boolean =
+        prompt == Prefs.WATCH_PROMPT_START_TIMER ||
+            prompt == Prefs.WATCH_PROMPT_LEAVE_EARLY
+
     @SuppressLint("MissingPermission")
     fun refresh(c: Context, onResult: (Boolean, String?) -> Unit) {
+        val appContext = c.applicationContext
+        val shouldStart = synchronized(refreshLock) {
+            refreshCallbacks += onResult
+            if (refreshInFlight) {
+                refreshQueued = true
+                false
+            } else {
+                refreshInFlight = true
+                true
+            }
+        }
+        if (shouldStart) runRefresh(appContext)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun runRefresh(c: Context) {
         val client = LocationServices.getGeofencingClient(c)
         val pendingIntent = pendingIntent(c)
-        val armedPlaces = Prefs.getArmedPlaces(c)
-        val places = registrablePlaces(armedPlaces)
 
         fun failRegistration(message: String?) {
-            val error = message ?: "Geofence registration failed"
+            val error = message ?: "Monitoring setup failed"
             ArrivalProbeReceiver.cancel(c)
             Prefs.clearRegisteredPlaces(c)
             Prefs.clearArrivalRuntime(c)
@@ -154,10 +267,12 @@ object GeofenceManager {
                 detail = error.take(120),
             )
             WearSync.pushState(c)
-            onResult(false, error)
+            finishRefresh(c, false, error)
         }
 
         client.removeGeofences(pendingIntent).addOnCompleteListener {
+            val armedPlaces = Prefs.getArmedPlaces(c)
+            val places = registrablePlaces(armedPlaces)
             if (places.isEmpty()) {
                 ArrivalProbeReceiver.cancel(c)
                 Prefs.clearArrivalRuntime(c)
@@ -166,6 +281,9 @@ object GeofenceManager {
                 val invalidOnly = armedPlaces.isNotEmpty()
                 val error = if (invalidOnly) "Saved place has invalid location" else null
                 Prefs.setMonitoringError(c, error)
+                if (shouldClearSetupNotificationAfterRefresh(ok = !invalidOnly, error = error)) {
+                    Notifications.clearSetup(c)
+                }
                 DwellDiagnostics.logLifecycle(
                     c,
                     source = "monitoring",
@@ -173,7 +291,7 @@ object GeofenceManager {
                     detail = error ?: "no monitored places",
                 )
                 WearSync.pushState(c)
-                onResult(!invalidOnly, error)
+                finishRefresh(c, !invalidOnly, error)
                 return@addOnCompleteListener
             }
 
@@ -184,7 +302,7 @@ object GeofenceManager {
                     source = "monitoring",
                     issue = setupIssue,
                 )
-                onResult(false, setupIssue.error)
+                finishRefresh(c, false, setupIssue.error)
                 return@addOnCompleteListener
             }
 
@@ -204,6 +322,7 @@ object GeofenceManager {
                 .addOnSuccessListener {
                     Prefs.setRegisteredPlaces(c, places.map { it.id })
                     Prefs.setMonitoringError(c, null)
+                    Notifications.clearSetup(c)
                     ActivityRecognitionManager.start(c)
                     DwellDiagnostics.logLifecycle(
                         c,
@@ -212,11 +331,31 @@ object GeofenceManager {
                         detail = "${places.size} monitored place${if (places.size == 1) "" else "s"} registered with approach rings",
                     )
                     WearSync.pushState(c)
-                    onResult(true, null)
+                    finishRefresh(c, true, null)
                 }
                 .addOnFailureListener { e ->
                     failRegistration(e.message)
                 }
+        }
+    }
+
+    private fun finishRefresh(c: Context, ok: Boolean, error: String?) {
+        var callbacks: List<(Boolean, String?) -> Unit> = emptyList()
+        val shouldRunQueued = synchronized(refreshLock) {
+            if (refreshQueued) {
+                refreshQueued = false
+                true
+            } else {
+                refreshInFlight = false
+                callbacks = refreshCallbacks.toList()
+                refreshCallbacks.clear()
+                false
+            }
+        }
+        if (shouldRunQueued) {
+            runRefresh(c.applicationContext)
+        } else {
+            callbacks.forEach { it(ok, error) }
         }
     }
 
@@ -229,6 +368,42 @@ object GeofenceManager {
                 DwellPlace.hasValidCoordinates(place.latitude, place.longitude) &&
                 DwellPlace.isValidPlaceId(place.id)
         }
+
+    internal fun placeMonitoringUpdateError(
+        places: List<DwellPlace>,
+        placeId: String,
+        enabled: Boolean,
+    ): String? {
+        val place = places.firstOrNull { it.id == placeId }
+            ?: return "Saved place no longer exists"
+        if (
+            enabled &&
+            !place.monitoringEnabled &&
+            places.count { it.monitoringEnabled } >= DwellPlace.MAX_MONITORED_PLACES
+        ) {
+            return monitoredPlaceLimitMessage()
+        }
+        return null
+    }
+
+    internal fun armMonitoringUpdateError(
+        places: List<DwellPlace>,
+        activePlaceId: String?,
+    ): String? =
+        if (activePlaceId.isNullOrBlank()) {
+            monitoredPlaceLimitMessage().takeIf {
+                places.count { place -> place.monitoringEnabled } >= DwellPlace.MAX_MONITORED_PLACES
+            }
+        } else {
+            placeMonitoringUpdateError(
+                places = places,
+                placeId = activePlaceId,
+                enabled = true,
+            )
+        }
+
+    internal fun monitoredPlaceLimitMessage(): String =
+        "Dwell can monitor up to ${DwellPlace.MAX_MONITORED_PLACES} places. Pause another monitored place first."
 
     private fun zoneGeofenceForPlace(place: DwellPlace): Geofence =
         Geofence.Builder()

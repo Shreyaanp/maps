@@ -1,6 +1,7 @@
 package work.shreyaan.dwell
 
 import android.provider.Settings
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,6 +18,26 @@ class BatteryReliabilityTest {
     @Test
     fun doesNotFlagPixelManufacturerAsAggressive() {
         assertFalse(BatteryReliability.isKnownAggressiveManufacturer("Google"))
+    }
+
+    @Test
+    fun optimizedBatteryDetailNamesTheAppInfoPathToUnrestricted() {
+        assertEquals(
+            "Test may delay background arrival checks. Open app info, then Battery, and choose Unrestricted.",
+            BatteryReliabilityStatus(
+                manufacturer = "Test",
+                isKnownAggressiveOem = true,
+                isIgnoringOptimizations = false,
+            ).detail,
+        )
+        assertEquals(
+            "Android may delay background arrival checks while battery optimization is enabled. Open app info, then Battery, and choose Unrestricted.",
+            BatteryReliabilityStatus(
+                manufacturer = "Test",
+                isKnownAggressiveOem = false,
+                isIgnoringOptimizations = false,
+            ).detail,
+        )
     }
 
     @Test

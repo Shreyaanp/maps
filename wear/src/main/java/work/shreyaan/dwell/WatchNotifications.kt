@@ -19,6 +19,11 @@ import java.util.Date
 object WatchNotifications {
     private const val CHANNEL_TIMER = "dwell_timer"
     private const val NOTIF_TIMER = 10
+    private val placeholderPlaceLabels = setOf(
+        "Selected place",
+        "Saved place",
+        "No place selected",
+    )
 
     private fun notificationManager(c: Context): NotificationManager =
         c.getSystemService(NotificationManager::class.java)
@@ -29,6 +34,58 @@ object WatchNotifications {
                 c,
                 Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED
+
+    private fun displayPlaceLabel(placeLabel: String): String? =
+        placeLabel
+            .trim()
+            .takeIf { it.isNotBlank() }
+            ?.takeUnless { placeholderPlaceLabels.contains(it) }
+
+    internal fun timerStartedTitle(placeLabel: String): String =
+        displayPlaceLabel(placeLabel)?.let { "$it timer started" } ?: "Timer started"
+
+    internal fun timerRunningText(placeLabel: String, endsAt: String): String {
+        val label = displayPlaceLabel(placeLabel) ?: "Dwell timer"
+        return "$label ends at $endsAt"
+    }
+
+    internal fun leavingEarlyTitle(placeLabel: String): String {
+        val label = displayPlaceLabel(placeLabel) ?: "this place"
+        return "Leaving $label?"
+    }
+
+    internal fun timeUpTitle(placeLabel: String): String =
+        displayPlaceLabel(placeLabel)?.let { "Time's up at $it" } ?: "Time's up"
+
+    internal fun timeUpText(placeLabel: String): String =
+        displayPlaceLabel(placeLabel)?.let { "Extend or mark done for $it." }
+            ?: "Done or extend from your watch."
+
+    internal fun arrivalPromptTitle(placeLabel: String): String =
+        startPromptNotificationTitle(placeLabel, switching = false)
+
+    internal fun arrivalPromptText(placeLabel: String): String =
+        startPromptNotificationText(placeLabel, switching = false)
+
+    internal fun startPromptNotificationTitle(placeLabel: String, switching: Boolean): String {
+        val label = displayPlaceLabel(placeLabel)
+        return when {
+            switching && label != null -> "Switch to $label?"
+            switching -> "Switch timer?"
+            label != null -> "Start timer at $label?"
+            else -> "Start timer?"
+        }
+    }
+
+    internal fun startPromptNotificationText(placeLabel: String, switching: Boolean): String {
+        val label = displayPlaceLabel(placeLabel)
+        return when {
+            switching && label != null -> "Start $label and stop the current timer."
+            switching -> "Start a new timer and stop the current one."
+            label != null -> "Dwell thinks you arrived at $label."
+            else -> "Dwell thinks you arrived."
+        }
+    }
 
     fun ensureChannels(c: Context) {
         val channel = NotificationChannel(
@@ -57,12 +114,11 @@ object WatchNotifications {
             Intent(c, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val label = placeLabel.ifBlank { "Dwell timer" }
         val endsAt = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(timerEnd))
         val notification = Notification.Builder(c, CHANNEL_TIMER)
             .setSmallIcon(R.drawable.ic_stat_timer)
-            .setContentTitle("Timer started")
-            .setContentText("$label ends at $endsAt")
+            .setContentTitle(timerStartedTitle(placeLabel))
+            .setContentText(timerRunningText(placeLabel, endsAt))
             .setWhen(timerEnd)
             .setUsesChronometer(true)
             .setChronometerCountDown(true)
@@ -91,11 +147,10 @@ object WatchNotifications {
             Intent(c, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val label = placeLabel.ifBlank { "this place" }
         val endsAt = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(timerEnd))
         val notification = Notification.Builder(c, CHANNEL_TIMER)
             .setSmallIcon(R.drawable.ic_stat_timer)
-            .setContentTitle("Leaving $label?")
+            .setContentTitle(leavingEarlyTitle(placeLabel))
             .setContentText("Keep timer or cancel. Ends at $endsAt.")
             .setAutoCancel(true)
             .setOnlyAlertOnce(!alert)
@@ -111,6 +166,7 @@ object WatchNotifications {
         c: Context,
         placeLabel: String,
         alert: Boolean,
+        switching: Boolean = false,
     ) {
         if (!canNotify(c)) return
         ensureChannels(c)
@@ -121,11 +177,10 @@ object WatchNotifications {
             Intent(c, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val label = placeLabel.ifBlank { "this place" }
         val notification = Notification.Builder(c, CHANNEL_TIMER)
             .setSmallIcon(R.drawable.ic_stat_timer)
-            .setContentTitle("Start timer?")
-            .setContentText("Dwell thinks you arrived at $label.")
+            .setContentTitle(startPromptNotificationTitle(placeLabel, switching))
+            .setContentText(startPromptNotificationText(placeLabel, switching))
             .setAutoCancel(true)
             .setOnlyAlertOnce(!alert)
             .setContentIntent(openApp)
@@ -152,8 +207,8 @@ object WatchNotifications {
         )
         val notification = Notification.Builder(c, CHANNEL_TIMER)
             .setSmallIcon(R.drawable.ic_stat_timer)
-            .setContentTitle("Time's up")
-            .setContentText(placeLabel.ifBlank { "Done or extend from your watch." })
+            .setContentTitle(timeUpTitle(placeLabel))
+            .setContentText(timeUpText(placeLabel))
             .setAutoCancel(true)
             .setOnlyAlertOnce(!alert)
             .setContentIntent(openApp)

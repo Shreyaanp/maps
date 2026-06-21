@@ -42,17 +42,17 @@ object MonitoringPrerequisites {
                 error = "Location permission is needed",
                 detail = "location permission missing",
             )
-            !hasBackgroundLocation -> SetupIssue(
-                error = "Background location permission is needed",
-                detail = "background location missing",
-            )
             !hasNotifications -> SetupIssue(
                 error = "Notification permission is needed",
                 detail = "notification permission missing",
             )
             !hasMotion -> SetupIssue(
-                error = "Motion permission is needed",
+                error = "Physical activity permission is needed",
                 detail = "activity recognition permission missing",
+            )
+            !hasBackgroundLocation -> SetupIssue(
+                error = "Background location permission is needed",
+                detail = "background location missing",
             )
             else -> null
         }

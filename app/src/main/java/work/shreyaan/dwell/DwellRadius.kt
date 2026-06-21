@@ -1,8 +1,8 @@
 package work.shreyaan.dwell
 
 object DwellRadius {
-    const val MIN_METERS = 100f
-    const val DEFAULT_METERS = 150f
+    const val MIN_METERS = 50f
+    const val DEFAULT_METERS = 50f
     const val MAX_METERS = 500f
     const val APPROACH_MIN_METERS = 450f
     const val APPROACH_MAX_METERS = 1_000f

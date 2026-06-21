@@ -39,6 +39,11 @@ data class DwellPlaceInsight(
     val latestSessionAtMillis: Long,
 )
 
+internal data class DwellTimerSessionPlace(
+    val placeId: String,
+    val placeLabel: String,
+)
+
 data class DwellDayInsight(
     val dayStartMillis: Long,
     val minutes: Int,
@@ -75,11 +80,10 @@ object DwellInsights {
         if (startedAt <= 0L || timerEnd <= 0L) return
 
         val placeId = Prefs.getTimerPlaceId(context)
-        val place = Prefs.getPlace(context, placeId)
-        val resolvedPlaceId = place?.id ?: placeId.ifBlank { "unknown_place" }
-        val label = place?.safeLabel
-            ?: Prefs.getPlaceLabel(context).takeIf { it.isNotBlank() }
-            ?: "Dwell session"
+        val sessionPlace = timerSessionPlace(
+            timerPlaceId = placeId,
+            place = Prefs.getSavedPlace(context, placeId),
+        )
         val endedAt = when (outcome) {
             DwellSessionOutcome.Completed -> timerEnd.coerceAtLeast(startedAt)
             DwellSessionOutcome.Cancelled -> finishedAtMillis.coerceIn(startedAt, Long.MAX_VALUE)
@@ -92,17 +96,26 @@ object DwellInsights {
                 id = stableSessionId(
                     startedAtMillis = startedAt,
                     endedAtMillis = endedAt,
-                    placeId = resolvedPlaceId,
+                    placeId = sessionPlace.placeId,
                     outcome = outcome,
                 ),
-                placeId = resolvedPlaceId,
-                placeLabel = label.take(120),
+                placeId = sessionPlace.placeId,
+                placeLabel = sessionPlace.placeLabel.take(120),
                 startedAtMillis = startedAt,
                 endedAtMillis = endedAt,
                 plannedDurationMinutes = TimerController.completionDurationMinutes(context),
                 outcome = outcome,
             ),
         )
+    }
+
+    internal fun timerSessionPlace(timerPlaceId: String?, place: DwellPlace?): DwellTimerSessionPlace {
+        val explicitPlaceId = timerPlaceId?.takeIf { it.isNotBlank() }
+        return if (explicitPlaceId != null && place != null) {
+            DwellTimerSessionPlace(place.id, place.safeLabel)
+        } else {
+            DwellTimerSessionPlace(explicitPlaceId ?: "unknown_place", "Dwell session")
+        }
     }
 
     fun loadSessions(context: Context): List<DwellSession> =

@@ -23,6 +23,19 @@ class DwellPlaceTest {
     }
 
     @Test
+    fun normalizesLongLabelsToUiLimit() {
+        val place = DwellPlace.create(
+            label = "A".repeat(DwellPlace.MAX_LABEL_LENGTH + 12),
+            latitude = 17.47,
+            longitude = 78.36,
+            radiusMeters = 50f,
+            durationMinutes = 60,
+        )
+
+        assertEquals(DwellPlace.MAX_LABEL_LENGTH, place.safeLabel.length)
+    }
+
+    @Test
     fun updatesTimerDefaultsWithoutLosingPlaceIdentity() {
         val place = DwellPlace.create(
             label = "Office",
@@ -186,7 +199,7 @@ class DwellPlaceTest {
             DwellPlace(
                 id = "place-$index",
                 label = "Place $index",
-                latitude = 17.0,
+                latitude = 17.0 + (index * 0.001),
                 longitude = 78.0,
                 radiusMeters = 150f,
                 durationMinutes = 270,
@@ -242,10 +255,10 @@ class DwellPlaceTest {
         assertEquals(1, normalized.size)
         val merged = normalized.single()
         assertEquals("office", merged.id)
-        assertEquals("office", merged.safeLabel)
-        assertEquals(17.0001, merged.latitude, 0.0001)
-        assertEquals(180f, merged.radiusMeters, 0f)
-        assertEquals(120, merged.durationMinutes)
+        assertEquals("Office", merged.safeLabel)
+        assertEquals(17.0000, merged.latitude, 0.0001)
+        assertEquals(100f, merged.radiusMeters, 0f)
+        assertEquals(60, merged.durationMinutes)
         assertTrue(merged.monitoringEnabled)
         assertEquals(false, merged.autoStart)
     }
@@ -258,6 +271,16 @@ class DwellPlaceTest {
         val normalized = DwellPlace.normalizePlaces(listOf(office, gym))
 
         assertEquals(listOf("office", "gym"), normalized.map { it.id })
+    }
+
+    @Test
+    fun normalizePlacesCollapsesNearExactPointEvenWhenLabelsDiffer() {
+        val office = placeForDuplicateTest("office", "Office", 17.0000, 78.0000)
+        val renamedOffice = placeForDuplicateTest("renamed-office", "Work", 17.00002, 78.0000)
+
+        val normalized = DwellPlace.normalizePlaces(listOf(office, renamedOffice))
+
+        assertEquals(listOf("office"), normalized.map { it.id })
     }
 
     @Test

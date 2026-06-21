@@ -7,28 +7,45 @@ import android.content.Intent
 import android.os.Build
 
 object TimerController {
+    const val EXTRA_TIMER_PLACE_ID = "timer_place_id"
+    const val EXTRA_TIMER_STARTED_AT = "timer_started_at"
+    const val EXTRA_TIMER_END = "timer_end"
 
-    private fun alarmIntent(c: Context): PendingIntent =
+    private fun alarmIntent(
+        c: Context,
+        timerPlaceId: String? = null,
+        timerStartedAt: Long = 0L,
+        timerEnd: Long = 0L,
+    ): PendingIntent =
         PendingIntent.getBroadcast(
-            c, 200, Intent(c, TimerAlarmReceiver::class.java),
+            c,
+            200,
+            Intent(c, TimerAlarmReceiver::class.java)
+                .putExtra(EXTRA_TIMER_PLACE_ID, timerPlaceId.orEmpty())
+                .putExtra(EXTRA_TIMER_STARTED_AT, timerStartedAt)
+                .putExtra(EXTRA_TIMER_END, timerEnd),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+    @Synchronized
     fun startTimer(
         c: Context,
         durationMinutes: Int,
         placeId: String? = null,
+        allowActivePlaceFallback: Boolean = true,
     ) {
-        val resolvedPlaceId = placeId
-            ?: Prefs.getPromptPlaceId(c).takeIf { it.isNotBlank() }
-            ?: Prefs.getActivePlace(c)?.id
+        if (isRunning(c)) return
+        val resolvedPlaceId = resolvedTimerPlaceId(
+            requestedPlaceId = placeId,
+            promptPlaceId = Prefs.getPromptPlaceId(c),
+            activePlaceId = if (allowActivePlaceFallback) Prefs.getActivePlace(c)?.id else null,
+        )
         val now = System.currentTimeMillis()
         val end = TimerMath.endFromDuration(now, durationMinutes)
         ArrivalProbeReceiver.cancel(c)
         Prefs.clearArrivalRuntime(c)
         Prefs.clearWatchPrompt(c)
         Prefs.setTimerPlaceId(c, resolvedPlaceId)
-        resolvedPlaceId?.takeIf { it.isNotBlank() }?.let { Prefs.setActivePlace(c, it) }
         Prefs.setTimerStartedAt(c, now)
         Prefs.setTimerEnd(c, end)
         scheduleAlarm(c, end)
@@ -36,20 +53,29 @@ object TimerController {
         WearSync.pushState(c)
     }
 
+    internal fun resolvedTimerPlaceId(
+        requestedPlaceId: String?,
+        promptPlaceId: String?,
+        activePlaceId: String?,
+        allowActivePlaceFallback: Boolean = true,
+    ): String? =
+        requestedPlaceId?.takeIf { it.isNotBlank() }
+            ?: promptPlaceId?.takeIf { it.isNotBlank() }
+            ?: activePlaceId?.takeIf { allowActivePlaceFallback && it.isNotBlank() }
+
+    @Synchronized
     fun extendTimer(c: Context, extraMinutes: Int) {
         val now = System.currentTimeMillis()
         val currentEnd = Prefs.getTimerEnd(c)
         val end = TimerMath.extendedEnd(now, currentEnd, extraMinutes)
         ArrivalProbeReceiver.cancel(c)
-        Prefs.clearArrivalRuntime(c)
+        Prefs.clearArrivalRuntime(c, clearSwitchPromptSuppression = false)
         if (Prefs.getTimerStartedAt(c) <= 0L) {
             Prefs.setTimerStartedAt(c, now)
         }
         Prefs.clearWatchPrompt(c)
-        if (Prefs.getTimerPlaceId(c).isBlank()) {
-            Prefs.setTimerPlaceId(c, Prefs.getActivePlace(c)?.id)
-        }
         Prefs.setTimerEnd(c, end)
+        Prefs.extendSwitchPromptSuppressionForCurrentTimer(c, end)
         scheduleAlarm(c, end)
         Notifications.notifyTimerRunning(c, end)
         WearSync.pushState(c)
@@ -57,13 +83,29 @@ object TimerController {
 
     fun completionDurationMinutes(c: Context): Int =
         TimerMath.completionDurationMinutes(
-            timerPlaceDurationMinutes = Prefs.getPlace(c, Prefs.getTimerPlaceId(c))?.durationMinutes,
+            timerPlaceDurationMinutes = explicitTimerPlaceDurationMinutes(
+                timerPlaceId = Prefs.getTimerPlaceId(c),
+                durationForPlaceId = { placeId -> Prefs.getSavedPlace(c, placeId)?.durationMinutes },
+            ),
             fallbackDurationMinutes = Prefs.getDurationMinutes(c),
         )
 
+    internal fun explicitTimerPlaceDurationMinutes(
+        timerPlaceId: String?,
+        durationForPlaceId: (String) -> Int?,
+    ): Int? =
+        timerPlaceId
+            ?.takeIf { it.isNotBlank() }
+            ?.let(durationForPlaceId)
+
     fun scheduleAlarm(c: Context, end: Long) {
         val am = c.getSystemService(AlarmManager::class.java)
-        val pi = alarmIntent(c)
+        val pi = alarmIntent(
+            c = c,
+            timerPlaceId = Prefs.getTimerPlaceId(c),
+            timerStartedAt = Prefs.getTimerStartedAt(c),
+            timerEnd = end,
+        )
         if (Build.VERSION.SDK_INT >= 31 && !am.canScheduleExactAlarms()) {
             // Exact alarms not allowed: fall back to an inexact alarm (may be
             // delayed by a few minutes by the OS).
@@ -73,6 +115,32 @@ object TimerController {
         }
     }
 
+    internal fun acceptsTimerAlarm(
+        actionTimerPlaceId: String?,
+        actionTimerStartedAt: Long,
+        actionTimerEnd: Long,
+        currentTimerPlaceId: String,
+        currentTimerStartedAt: Long,
+        currentTimerEnd: Long,
+        now: Long,
+    ): Boolean {
+        if (currentTimerStartedAt <= 0L || currentTimerEnd <= 0L || currentTimerEnd > now) {
+            return false
+        }
+        val hasActionTimerScope = actionTimerStartedAt > 0L && actionTimerEnd > 0L
+        if (!hasActionTimerScope) return true
+
+        return NotificationActionReceiver.acceptsScopedTimerAction(
+            currentTimerPlaceId = currentTimerPlaceId,
+            currentTimerStartedAt = currentTimerStartedAt,
+            currentTimerEnd = currentTimerEnd,
+            actionTimerPlaceId = actionTimerPlaceId?.takeIf { it.isNotBlank() },
+            actionTimerStartedAt = actionTimerStartedAt,
+            actionTimerEnd = actionTimerEnd,
+        )
+    }
+
+    @Synchronized
     fun cancelTimer(c: Context) {
         if (TimerMath.isRunning(Prefs.getTimerEnd(c), System.currentTimeMillis())) {
             DwellInsights.recordTimerFinished(c, DwellSessionOutcome.Cancelled)
@@ -87,6 +155,7 @@ object TimerController {
         WearSync.pushState(c)
     }
 
+    @Synchronized
     fun clearCompletedTimer(c: Context) {
         if (Prefs.getTimerEnd(c) > 0L && Prefs.getTimerEnd(c) <= System.currentTimeMillis()) {
             DwellInsights.recordTimerFinished(c, DwellSessionOutcome.Completed)

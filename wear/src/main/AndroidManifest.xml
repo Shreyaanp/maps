@@ -63,5 +63,9 @@
                 android:name="androidx.wear.tiles.PREVIEW"
                 android:resource="@drawable/tile_preview" />
         </service>
+
+        <receiver
+            android:name=".WatchTimerExpiryReceiver"
+            android:exported="false" />
     </application>
 </manifest>
