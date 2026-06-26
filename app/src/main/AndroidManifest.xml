@@ -43,6 +43,7 @@
 
         <receiver android:name=".GeofenceReceiver" android:exported="false" />
         <receiver android:name=".ArrivalProbeReceiver" android:exported="false" />
+        <receiver android:name=".MonitoringReliabilityReceiver" android:exported="false" />
         <receiver android:name=".ActivityRecognitionReceiver" android:exported="false" />
         <receiver android:name=".TimerAlarmReceiver" android:exported="false" />
         <receiver android:name=".NotificationActionReceiver" android:exported="false" />

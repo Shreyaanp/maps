@@ -324,11 +324,11 @@ class WatchCommandPayloadTest {
             watchReadyDetail(hasPlace = true, armed = false, needsSetup = false),
         )
         assertEquals(
-            "Monitoring live",
+            "Monitoring registered",
             watchReadyTitle(hasPlace = true, armed = true, needsSetup = false),
         )
         assertEquals(
-            "2 places live",
+            "2 places registered",
             watchReadyTitle(
                 hasPlace = true,
                 armed = true,

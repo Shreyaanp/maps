@@ -13,12 +13,19 @@ data class BatteryReliabilityStatus(
     val manufacturer: String,
     val isKnownAggressiveOem: Boolean,
     val isIgnoringOptimizations: Boolean,
+    val isPowerSaveMode: Boolean = false,
 ) {
     val label: String
-        get() = if (isIgnoringOptimizations) "Unrestricted" else "Optimized"
+        get() = when {
+            isPowerSaveMode -> "Battery saver on"
+            isIgnoringOptimizations -> "Unrestricted"
+            else -> "Optimized"
+        }
 
     val detail: String
         get() = when {
+            isPowerSaveMode ->
+                "Battery Saver is on and may stop Dwell from receiving background arrivals. Turn off Battery Saver or choose Unrestricted for Dwell."
             isIgnoringOptimizations ->
                 "Android is allowing Dwell to run without Doze battery restrictions."
             isKnownAggressiveOem ->
@@ -53,6 +60,7 @@ object BatteryReliability {
             manufacturer = manufacturer,
             isKnownAggressiveOem = isKnownAggressiveManufacturer(Build.MANUFACTURER),
             isIgnoringOptimizations = isIgnoringOptimizations(context),
+            isPowerSaveMode = isPowerSaveMode(context),
         )
     }
 
@@ -61,15 +69,21 @@ object BatteryReliability {
         return powerManager?.isIgnoringBatteryOptimizations(context.packageName) == true
     }
 
-    internal fun settingsActionOrder(): List<String> =
-        listOf(
-            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-            Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
-        )
+    fun isPowerSaveMode(context: Context): Boolean {
+        val powerManager = context.getSystemService(PowerManager::class.java)
+        return powerManager?.isPowerSaveMode == true
+    }
+
+    internal fun settingsActionOrder(powerSaveMode: Boolean = false): List<String> =
+        buildList {
+            if (powerSaveMode) add(Settings.ACTION_BATTERY_SAVER_SETTINGS)
+            add(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            add(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        }
 
     fun openSettings(context: Context): Boolean {
         val packageUri = Uri.parse("package:${context.packageName}")
-        val intents = settingsActionOrder().map { action ->
+        val intents = settingsActionOrder(isPowerSaveMode(context)).map { action ->
             Intent(action).apply {
                 if (action == Settings.ACTION_APPLICATION_DETAILS_SETTINGS) {
                     data = packageUri

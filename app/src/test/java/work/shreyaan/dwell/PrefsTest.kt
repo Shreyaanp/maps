@@ -399,12 +399,17 @@ class PrefsTest {
             ),
         )
         assertEquals(
-            "Dwell paused 3 extra monitored places because the live monitoring limit is ${DwellPlace.MAX_MONITORED_PLACES}. Pause other monitored places before turning them back on.",
+            "Dwell paused 3 extra monitored places because the monitoring limit is ${DwellPlace.MAX_MONITORED_PLACES}. Pause other monitored places before turning them back on.",
             Prefs.monitoringLimitNormalizationMessage(3),
         )
         assertTrue(
             Prefs.isMonitoringLimitNormalizationMessage(
                 Prefs.monitoringLimitNormalizationMessage(1),
+            ),
+        )
+        assertTrue(
+            Prefs.isMonitoringLimitNormalizationMessage(
+                "Dwell paused 1 extra monitored place because the live monitoring limit is ${DwellPlace.MAX_MONITORED_PLACES}. Pause another monitored place before turning it back on.",
             ),
         )
     }

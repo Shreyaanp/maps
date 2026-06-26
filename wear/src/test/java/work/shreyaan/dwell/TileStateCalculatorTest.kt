@@ -86,7 +86,7 @@ class TileStateCalculatorTest {
     @Test
     fun readyStateShowsArrivalMessageWhenArmed() {
         assertEquals(
-            TileState("Office", "Live", "Starts on arrival", "Open"),
+            TileState("Office", "Registered", "Starts on arrival", "Open"),
             TileStateCalculator.state(
                 hasPlace = true,
                 placeLabel = "Office",
@@ -99,9 +99,9 @@ class TileStateCalculatorTest {
     }
 
     @Test
-    fun readyStateLeadsWithLivePlaceCountWhenMultiplePlacesAreRegistered() {
+    fun readyStateLeadsWithRegisteredPlaceCountWhenMultiplePlacesAreRegistered() {
         assertEquals(
-            TileState("Dwell", "2 live", "Monitoring live", "Open"),
+            TileState("Dwell", "2 registered", "Monitoring registered", "Open"),
             TileStateCalculator.state(
                 hasPlace = true,
                 placeLabel = "Office",

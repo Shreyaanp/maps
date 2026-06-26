@@ -76,6 +76,7 @@ object GeofenceManager {
             .removeGeofences(pendingIntent(c))
             .addOnCompleteListener { task ->
                 ArrivalProbeReceiver.cancel(c)
+                MonitoringReliabilityReceiver.cancel(c)
                 Prefs.clearArrivalRuntime(c)
                 Prefs.clearRegisteredPlaces(c)
                 Prefs.setMonitoringError(c, null)
@@ -175,6 +176,7 @@ object GeofenceManager {
             )
         ) {
             Notifications.clearSetup(c)
+            MonitoringReliabilityReceiver.ensureScheduled(c)
             onResult(true, null)
             return
         }
@@ -256,6 +258,7 @@ object GeofenceManager {
         fun failRegistration(message: String?) {
             val error = message ?: "Monitoring setup failed"
             ArrivalProbeReceiver.cancel(c)
+            MonitoringReliabilityReceiver.cancel(c)
             Prefs.clearRegisteredPlaces(c)
             Prefs.clearArrivalRuntime(c)
             Prefs.setMonitoringError(c, error)
@@ -275,6 +278,7 @@ object GeofenceManager {
             val places = registrablePlaces(armedPlaces)
             if (places.isEmpty()) {
                 ArrivalProbeReceiver.cancel(c)
+                MonitoringReliabilityReceiver.cancel(c)
                 Prefs.clearArrivalRuntime(c)
                 Prefs.clearRegisteredPlaces(c)
                 ActivityRecognitionManager.stop(c)
@@ -324,6 +328,7 @@ object GeofenceManager {
                     Prefs.setMonitoringError(c, null)
                     Notifications.clearSetup(c)
                     ActivityRecognitionManager.start(c)
+                    MonitoringReliabilityReceiver.ensureScheduled(c)
                     DwellDiagnostics.logLifecycle(
                         c,
                         source = "monitoring",

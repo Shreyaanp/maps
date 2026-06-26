@@ -385,14 +385,14 @@ internal fun radiusControlState(
             valueMeters = normalizedRadius.coerceIn(DwellRadius.MIN_METERS, monitoredLimit),
             maxMeters = monitoredLimit,
             sliderEnabled = true,
-            helperText = "Monitoring is live. You can tighten radius; pause to increase above ${monitoredLimit.roundToInt()} m.",
+            helperText = "Monitoring is registered. You can tighten radius; pause to increase above ${monitoredLimit.roundToInt()} m.",
         )
     } else {
         RadiusControlState(
             valueMeters = normalizedRadius,
             maxMeters = DwellRadius.MAX_METERS,
             sliderEnabled = false,
-            helperText = "Monitoring is live at the 50 m minimum. Pause monitoring to increase radius.",
+            helperText = "Monitoring is registered at the 50 m minimum. Pause monitoring to increase radius.",
         )
     }
 }
@@ -1137,7 +1137,7 @@ internal fun onboardingGuideSteps(): List<String> = listOf(
     "Tap Add place, then pick Home, Office, Gym, or any exact spot.",
     "Use search for an address, current location for where you are, or a long-press for a precise map point.",
     "Review the unsaved name, radius, timer duration, and arrival mode before it changes anything.",
-    "Tap Save this place, then Monitor. Repeat for every place you want watched live.",
+    "Tap Save this place, then Monitor. Repeat for every place you want watched.",
 )
 
 internal data class TutorialFlowStep(
@@ -1221,7 +1221,7 @@ internal fun appTutorialExampleSteps(): List<TutorialFlowStep> = listOf(
 internal fun appTutorialMultiplePlaceRules(): List<TutorialFlowStep> = listOf(
     TutorialFlowStep(
         title = "Monitor several rows",
-        detail = "Home, Office, Gym, and other saved places can all stay live together.",
+        detail = "Home, Office, Gym, and other saved places can all stay registered together.",
     ),
     TutorialFlowStep(
         title = "Settings stay separate",
@@ -1252,7 +1252,7 @@ internal fun appTutorialStuckStateSteps(): List<TutorialFlowStep> = listOf(
     ),
     TutorialFlowStep(
         title = "Monitoring limit",
-        detail = "If the live-place limit appears, pause another monitored place before monitoring a new row.",
+        detail = "If the monitoring limit appears, pause another monitored place before monitoring a new row.",
     ),
 )
 
@@ -1265,6 +1265,8 @@ internal fun setupChecksIntroDetail(
         onboardingPermissionHelp(permissionStatus)
     !exactAlarmAllowed ->
         "Allow exact alarms so timers can alert on time."
+    batteryReliabilityStatus.isPowerSaveMode ->
+        "Turn off Battery Saver so background arrivals are not blocked."
     batteryNeedsReliabilityReview(batteryReliabilityStatus) ->
         "Open app info, then Battery, and choose Unrestricted so background arrivals are not delayed."
     else ->
@@ -1317,13 +1319,14 @@ internal fun setupChecksBatteryActionLabel(
     batteryReliabilityStatus: BatteryReliabilityStatus,
 ): String? =
     if (batteryNeedsReliabilityReview(batteryReliabilityStatus)) {
-        batteryHelpActionLabel()
+        batteryHelpActionLabel(batteryReliabilityStatus)
     } else {
         null
     }
 
 internal fun batteryNeedsReliabilityReview(status: BatteryReliabilityStatus): Boolean =
-    status.isKnownAggressiveOem && !status.isIgnoringOptimizations
+    status.isPowerSaveMode ||
+        (status.isKnownAggressiveOem && !status.isIgnoringOptimizations)
 
 internal fun backgroundLocationHelpMessage(): String =
     "Allow all-the-time location so Dwell can detect arrivals after you leave the app."
@@ -1331,13 +1334,17 @@ internal fun backgroundLocationHelpMessage(): String =
 internal fun backgroundLocationHelpActionLabel(): String = "Open app settings"
 
 internal fun batteryHelpMessage(status: BatteryReliabilityStatus): String =
-    if (status.isKnownAggressiveOem) {
-        "${status.manufacturer} may delay background arrivals. Open app info, then Battery, and choose Unrestricted."
-    } else {
-        "Android may delay background arrivals while battery optimization is enabled. Open app info, then Battery, and choose Unrestricted."
+    when {
+        status.isPowerSaveMode ->
+            "Battery Saver is on and may stop Dwell from receiving background arrivals. Turn off Battery Saver first."
+        status.isKnownAggressiveOem ->
+            "${status.manufacturer} may delay background arrivals. Open app info, then Battery, and choose Unrestricted."
+        else ->
+            "Android may delay background arrivals while battery optimization is enabled. Open app info, then Battery, and choose Unrestricted."
     }
 
-internal fun batteryHelpActionLabel(): String = "Open app info"
+internal fun batteryHelpActionLabel(status: BatteryReliabilityStatus? = null): String =
+    if (status?.isPowerSaveMode == true) "Open Battery Saver" else "Open app info"
 
 internal fun appDataDeletedMessage(): String = "App data deleted"
 
@@ -1887,7 +1894,7 @@ internal fun idleHomeStatusDetail(
 ): String =
     when {
         hasSelectedPlace && armedPlaceCount > 0 ->
-            "Tap Monitor for this place. Other places stay live."
+            "Tap Monitor for this place. Other monitored places stay registered."
         hasSelectedPlace ->
             "Tap Monitor to watch arrivals here."
         hasPin ->
@@ -2119,9 +2126,9 @@ internal fun placesSummaryStatusText(
     val needsSetup = (monitored - live).coerceAtLeast(0)
     return when {
         monitored == 0 -> "No places monitoring arrivals"
-        needsSetup == 0 -> "${placeCountPhrase(live)} live"
+        needsSetup == 0 -> "${placeCountPhrase(live)} registered"
         live == 0 -> "${placeCountPhrase(needsSetup)} needs setup"
-        else -> "${placeCountPhrase(live)} live, $needsSetup needs setup"
+        else -> "${placeCountPhrase(live)} registered, $needsSetup needs setup"
     }
 }
 
@@ -2159,8 +2166,8 @@ internal fun placesSummaryPlaceNamesText(
 
     return when {
         liveText.isNotBlank() && setupText.isNotBlank() ->
-            "Live: $liveText; needs setup: $setupText"
-        liveText.isNotBlank() -> "Live: $liveText"
+            "Registered: $liveText; needs setup: $setupText"
+        liveText.isNotBlank() -> "Registered: $liveText"
         setupText.isNotBlank() -> "Needs setup: $setupText"
         else -> null
     }
@@ -2174,12 +2181,32 @@ internal fun homeDockMonitoringMetaText(
     val live = liveCount.coerceIn(0, monitored)
     val needsSetup = (monitored - live).coerceAtLeast(0)
     return when {
-        monitored == 0 -> "Not live"
-        needsSetup == 0 -> "$live live"
+        monitored == 0 -> "Not registered"
+        needsSetup == 0 -> "$live registered"
         live == 0 && needsSetup == 1 -> "1 needs setup"
         live == 0 -> "$needsSetup need setup"
-        else -> "$live live, $needsSetup setup"
+        else -> "$live registered, $needsSetup setup"
     }
+}
+
+internal fun homeDockCollapsedStatusDetail(
+    stateLabel: String,
+    monitoringMetaText: String,
+    monitoredCount: Int,
+    liveCount: Int,
+    activePlaceAutoStart: Boolean,
+    durationMinutes: Int,
+    radiusMeters: Float,
+    placeLabel: String,
+): String {
+    val monitored = monitoredCount.coerceAtLeast(0)
+    val live = liveCount.coerceIn(0, monitored)
+    val prefix = if (monitored > 1 && live < monitored) {
+        monitoringMetaText
+    } else {
+        stateLabel
+    }
+    return "$prefix | ${arrivalModeLabel(activePlaceAutoStart)} | ${Notifications.formatDuration(durationMinutes)} | ${radiusMeters.roundToInt()} m | $placeLabel"
 }
 
 internal fun monitoringStartFailureMessage(
@@ -2558,7 +2585,7 @@ internal fun alreadyInsideResultMessage(
             label?.let { "$it is monitoring arrivals. Dwell will wait for a stronger location signal." }
                 ?: "Monitoring on. Dwell will wait for a stronger location signal."
         else ->
-            label?.let { "$it is monitoring arrivals. Other monitored places stay live." }
+            label?.let { "$it is monitoring arrivals. Other monitored places stay registered." }
                 ?: "Monitoring on - the timer will start when you arrive"
     }
 }
@@ -2722,7 +2749,7 @@ internal fun placeMonitoringStatusLabel(
     isTimerPlace: Boolean,
 ): String = when {
     isTimerPlace -> "Timer here"
-    monitoringEnabled && isRegistered -> "Monitoring live"
+    monitoringEnabled && isRegistered -> "Registered"
     monitoringEnabled -> "Needs setup"
     else -> "Paused"
 }
@@ -2812,14 +2839,14 @@ internal fun placeRestoredMessage(
         "${displayablePlaceLabel(placeLabel) ?: "Place"} restored to Places"
     }
     return if (monitoringPausedByLimit) {
-        "$base. Monitoring is paused because the live-place limit is full."
+        "$base. Monitoring is paused because the monitoring limit is full."
     } else {
         base
     }
 }
 
 internal fun placePausedMessage(placeLabel: String): String =
-    "${displayablePlaceLabel(placeLabel) ?: "Place"} paused. Other monitored places stay live."
+    "${displayablePlaceLabel(placeLabel) ?: "Place"} paused. Other monitored places stay registered."
 
 internal enum class PlacesBackAction {
     DismissMonitorDialog,
@@ -2940,7 +2967,7 @@ internal fun monitoringHealthState(
         )
         liveCount <= 0 -> MonitoringHealth(
             title = "Monitoring needs setup",
-            detail = "${countText(monitoredCount, "place")} enabled, but none are live yet. Tap ${monitoringSetupActionLabel()} to restore arrival detection.",
+            detail = "${countText(monitoredCount, "place")} enabled, but none are registered yet. Tap ${monitoringSetupActionLabel()} to restore arrival detection.",
             stateLabel = "Needs setup",
             healthy = false,
             actionLabel = monitoringSetupActionLabel(),
@@ -2948,7 +2975,7 @@ internal fun monitoringHealthState(
         )
         liveCount < monitoredCount -> MonitoringHealth(
             title = "Some places need setup",
-            detail = "${countText(liveCount, "place")} live; ${countText(monitoredCount - liveCount, "place")} need setup. Tap ${monitoringSetupActionLabel()} to restore arrival detection.",
+            detail = "${countText(liveCount, "place")} registered; ${countText(monitoredCount - liveCount, "place")} need setup. Tap ${monitoringSetupActionLabel()} to restore arrival detection.",
             stateLabel = "Partial",
             healthy = false,
             actionLabel = monitoringSetupActionLabel(),
@@ -2963,7 +2990,7 @@ internal fun monitoringHealthState(
             action = MonitoringHealthAction.OpenExactAlarm,
         )
         batteryRisk -> MonitoringHealth(
-            title = "Monitoring live, battery may delay",
+            title = "Battery may block monitoring",
             detail = batteryReliabilityStatus.detail,
             stateLabel = "Battery risk",
             healthy = false,
@@ -2971,9 +2998,9 @@ internal fun monitoringHealthState(
             action = MonitoringHealthAction.OpenBattery,
         )
         else -> MonitoringHealth(
-            title = "Monitoring live",
-            detail = "${countText(liveCount, "place")} live. Phone owns arrival detection; watch mirrors timers.",
-            stateLabel = "Healthy",
+            title = "Monitoring registered",
+            detail = "${countText(liveCount, "place")} registered on this phone. Android may still delay events in Battery Saver or Doze.",
+            stateLabel = "Registered",
             healthy = true,
             actionLabel = "",
             action = MonitoringHealthAction.None,
@@ -3249,7 +3276,7 @@ fun DwellScreen() {
     fun showBatteryHelp(status: BatteryReliabilityStatus = BatteryReliability.status(context)) {
         showLongActionMessage(
             message = batteryHelpMessage(status),
-            actionLabel = batteryHelpActionLabel(),
+            actionLabel = batteryHelpActionLabel(status),
             onAction = {
                 val opened = BatteryReliability.openSettings(context)
                 if (!opened) toast("Could not open battery settings on this device")
@@ -5333,7 +5360,7 @@ fun DwellScreen() {
             activePlaceNeedsSetup = activePlaceNeedsSetup,
             hasActivePlaceSetupIssue = activePlaceSetupIssue != null,
         )
-        activePlaceArmed -> "Monitoring live"
+        activePlaceArmed -> "Monitoring registered"
         else -> idleHomeStatusTitle(
             hasSelectedPlace = activePlace != null,
             hasPin = pin != null,
@@ -5355,7 +5382,7 @@ fun DwellScreen() {
         activePlaceSetupIssue != null -> activePlaceSetupIssue
         editingCurrentPlace -> editingPlaceStatusDetail(activePlaceArmed)
         batteryWarning.isNotBlank() -> batteryWarning
-        activePlaceArmed -> "Timer starts when you arrive"
+        activePlaceArmed -> "Phone is registered for arrivals"
         else -> idleHomeStatusDetail(
             hasSelectedPlace = activePlace != null,
             hasPin = pin != null,
@@ -8142,7 +8169,7 @@ private fun HomeStatusDock(
         pendingPlacePreview -> if (pendingPlaceMove) "Unsaved move" else "Unsaved"
         timerActive -> "Active"
         activePlaceNeedsSetup || setupNotice.isNotBlank() -> "Needs setup"
-        activePlaceArmed && activePlaceRegistered -> "Live"
+        activePlaceArmed && activePlaceRegistered -> "Registered"
         hasPlace -> "Ready"
         else -> "Setup"
     }
@@ -8264,7 +8291,16 @@ private fun HomeStatusDock(
                             promptState != null -> statusDetail
                             timerActive -> statusDetail
                             !expanded && durationError != null -> durationFixCollapsedDetail(placeLabel)
-                            !expanded && hasPlace -> "$stateLabel | ${arrivalModeLabel(activePlaceAutoStart)} | ${Notifications.formatDuration(durationMinutes)} | ${radius.roundToInt()} m | $placeLabel"
+                            !expanded && hasPlace -> homeDockCollapsedStatusDetail(
+                                stateLabel = stateLabel,
+                                monitoringMetaText = liveText,
+                                monitoredCount = armedPlaceCount,
+                                liveCount = livePlaceCount,
+                                activePlaceAutoStart = activePlaceAutoStart,
+                                durationMinutes = durationMinutes,
+                                radiusMeters = radius,
+                                placeLabel = placeLabel,
+                            )
                             else -> statusDetail
                         },
                         maxLines = 1,
@@ -9425,7 +9461,7 @@ private fun SettingsScreen(
                     if (batteryReliabilityStatus.isIgnoringOptimizations) {
                         "Review battery settings"
                     } else {
-                        batteryHelpActionLabel()
+                        batteryHelpActionLabel(batteryReliabilityStatus)
                     }
                 )
             }
@@ -9820,7 +9856,7 @@ private fun TutorialScreen(
             SettingsRow(
                 icon = Icons.Filled.Watch,
                 title = "Watch state",
-                detail = "The watch mirrors setup, live monitoring count, prompts, timer, and time-up alerts.",
+                detail = "The watch mirrors setup, registered monitoring count, prompts, timer, and time-up alerts.",
             )
         }
 

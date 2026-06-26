@@ -52,7 +52,7 @@ class DwellRadiusTest {
         assertEquals(150f, monitored.maxMeters, 0f)
         assertEquals(true, monitored.sliderEnabled)
         assertEquals(
-            "Monitoring is live. You can tighten radius; pause to increase above 150 m.",
+            "Monitoring is registered. You can tighten radius; pause to increase above 150 m.",
             monitored.helperText,
         )
 
@@ -63,7 +63,7 @@ class DwellRadiusTest {
         assertEquals(50f, minimum.valueMeters, 0f)
         assertEquals(false, minimum.sliderEnabled)
         assertEquals(
-            "Monitoring is live at the 50 m minimum. Pause monitoring to increase radius.",
+            "Monitoring is registered at the 50 m minimum. Pause monitoring to increase radius.",
             minimum.helperText,
         )
     }

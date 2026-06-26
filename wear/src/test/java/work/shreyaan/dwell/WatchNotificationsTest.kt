@@ -217,7 +217,7 @@ class WatchNotificationsTest {
             ),
         )
         assertEquals(
-            "2 places live",
+            "2 places registered",
             watchReadyMetaText(
                 needsSetup = false,
                 monitoringError = "",

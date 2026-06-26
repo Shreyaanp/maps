@@ -147,8 +147,8 @@ internal fun watchReadyTitle(
     lastUpdated <= 0L -> "Syncing"
     WatchSyncCopy.isStale(lastUpdated, now) -> "Phone not nearby"
     needsSetup -> "Needs setup"
-    armed && livePlaceCount > 1 -> "$livePlaceCount places live"
-    armed -> "Monitoring live"
+    armed && livePlaceCount > 1 -> "$livePlaceCount places registered"
+    armed -> "Monitoring registered"
     hasPlace -> "Monitoring paused"
     else -> "No place yet"
 }
@@ -1348,7 +1348,7 @@ internal fun watchReadyMetaText(
     when {
         needsSetup && monitoringError.isNotBlank() -> monitoringError
         needsSetup -> "Needs setup"
-        registeredPlaceCount > 1 -> "$registeredPlaceCount places live"
+        registeredPlaceCount > 1 -> "$registeredPlaceCount places registered"
         armedPlaceCount > 1 -> "$armedPlaceCount places monitoring"
         else -> "${formatDurationMinutes(durationMinutes)} default"
     }

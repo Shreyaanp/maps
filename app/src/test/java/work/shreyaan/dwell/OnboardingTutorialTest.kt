@@ -434,7 +434,7 @@ class OnboardingTutorialTest {
                 "Tap Add place, then pick Home, Office, Gym, or any exact spot.",
                 "Use search for an address, current location for where you are, or a long-press for a precise map point.",
                 "Review the unsaved name, radius, timer duration, and arrival mode before it changes anything.",
-                "Tap Save this place, then Monitor. Repeat for every place you want watched live.",
+                "Tap Save this place, then Monitor. Repeat for every place you want watched.",
             ),
             onboardingGuideSteps(),
         )
@@ -537,7 +537,7 @@ class OnboardingTutorialTest {
             listOf(
                 TutorialFlowStep(
                     title = "Monitor several rows",
-                    detail = "Home, Office, Gym, and other saved places can all stay live together.",
+                    detail = "Home, Office, Gym, and other saved places can all stay registered together.",
                 ),
                 TutorialFlowStep(
                     title = "Settings stay separate",
@@ -574,7 +574,7 @@ class OnboardingTutorialTest {
                 ),
                 TutorialFlowStep(
                     title = "Monitoring limit",
-                    detail = "If the live-place limit appears, pause another monitored place before monitoring a new row.",
+                    detail = "If the monitoring limit appears, pause another monitored place before monitoring a new row.",
                 ),
             ),
             appTutorialStuckStateSteps(),
@@ -635,6 +635,18 @@ class OnboardingTutorialTest {
                 batteryReliabilityStatus = batteryStatus(
                     isKnownAggressiveOem = true,
                     isIgnoringOptimizations = false,
+                ),
+            ),
+        )
+        assertEquals(
+            "Turn off Battery Saver so background arrivals are not blocked.",
+            setupChecksIntroDetail(
+                permissionStatus = permissionsReady(),
+                exactAlarmAllowed = true,
+                batteryReliabilityStatus = batteryStatus(
+                    isKnownAggressiveOem = false,
+                    isIgnoringOptimizations = false,
+                    isPowerSaveMode = true,
                 ),
             ),
         )
@@ -750,11 +762,31 @@ class OnboardingTutorialTest {
             ),
         )
         assertEquals(
+            true,
+            batteryNeedsReliabilityReview(
+                batteryStatus(
+                    isKnownAggressiveOem = false,
+                    isIgnoringOptimizations = false,
+                    isPowerSaveMode = true,
+                ),
+            ),
+        )
+        assertEquals(
             false,
             batteryNeedsReliabilityReview(
                 batteryStatus(
                     isKnownAggressiveOem = true,
                     isIgnoringOptimizations = true,
+                ),
+            ),
+        )
+        assertEquals(
+            "Open Battery Saver",
+            setupChecksBatteryActionLabel(
+                batteryStatus(
+                    isKnownAggressiveOem = false,
+                    isIgnoringOptimizations = false,
+                    isPowerSaveMode = true,
                 ),
             ),
         )
@@ -869,10 +901,12 @@ class OnboardingTutorialTest {
     private fun batteryStatus(
         isKnownAggressiveOem: Boolean = false,
         isIgnoringOptimizations: Boolean = true,
+        isPowerSaveMode: Boolean = false,
     ): BatteryReliabilityStatus =
         BatteryReliabilityStatus(
             manufacturer = "Test",
             isKnownAggressiveOem = isKnownAggressiveOem,
             isIgnoringOptimizations = isIgnoringOptimizations,
+            isPowerSaveMode = isPowerSaveMode,
         )
 }

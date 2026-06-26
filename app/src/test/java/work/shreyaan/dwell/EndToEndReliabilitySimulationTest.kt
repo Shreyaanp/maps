@@ -307,7 +307,7 @@ class EndToEndReliabilitySimulationTest {
                 isIgnoringOptimizations = false,
             ),
         )
-        assertEquals("Monitoring live, battery may delay", batteryRisk.title)
+        assertEquals("Battery may block monitoring", batteryRisk.title)
         assertEquals("Review battery", batteryRisk.actionLabel)
         assertEquals(MonitoringHealthAction.OpenBattery, batteryRisk.action)
 

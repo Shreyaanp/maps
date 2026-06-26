@@ -182,11 +182,14 @@ object Prefs {
     }
 
     internal fun monitoringLimitNormalizationMessage(pausedCount: Int): String =
-        "Dwell paused ${monitoringLimitPausedCountText(pausedCount)} because the live monitoring limit is ${DwellPlace.MAX_MONITORED_PLACES}. ${monitoringLimitResumeInstruction(pausedCount)}"
+        "Dwell paused ${monitoringLimitPausedCountText(pausedCount)} because the monitoring limit is ${DwellPlace.MAX_MONITORED_PLACES}. ${monitoringLimitResumeInstruction(pausedCount)}"
 
     internal fun isMonitoringLimitNormalizationMessage(error: String?): Boolean =
         error?.startsWith("Dwell paused ") == true &&
-            error.contains("because the live monitoring limit is ${DwellPlace.MAX_MONITORED_PLACES}.")
+            (
+                error.contains("because the monitoring limit is ${DwellPlace.MAX_MONITORED_PLACES}.") ||
+                    error.contains("because the live monitoring limit is ${DwellPlace.MAX_MONITORED_PLACES}.")
+                )
 
     private fun monitoringLimitPausedCountText(count: Int): String =
         "$count ${if (count == 1) "extra monitored place" else "extra monitored places"}"

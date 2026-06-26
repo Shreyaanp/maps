@@ -63,6 +63,7 @@ object MonitoringPrerequisites {
         issue: SetupIssue,
     ) {
         ArrivalProbeReceiver.cancel(context)
+        MonitoringReliabilityReceiver.cancel(context)
         Prefs.clearRegisteredPlaces(context)
         Prefs.clearArrivalRuntime(context)
         Prefs.setMonitoringError(context, issue.error)

@@ -89,13 +89,13 @@ object TileStateCalculator {
             )
             armed && registeredPlaceCount > 1 -> TileState(
                 title = "Dwell",
-                primary = "$registeredPlaceCount live",
-                secondary = "Monitoring live",
+                primary = "$registeredPlaceCount registered",
+                secondary = "Monitoring registered",
                 action = "Open",
             )
             armed -> TileState(
                 title = place.ifBlank { "Dwell" },
-                primary = "Live",
+                primary = "Registered",
                 secondary = "Starts on arrival",
                 action = "Open",
             )

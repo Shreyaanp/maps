@@ -207,7 +207,7 @@ class UserStoryCopyTest {
             ),
         )
         assertEquals(
-            "Tap Monitor for this place. Other places stay live.",
+            "Tap Monitor for this place. Other monitored places stay registered.",
             idleHomeStatusDetail(
                 hasSelectedPlace = true,
                 hasPin = true,
@@ -1170,7 +1170,7 @@ class UserStoryCopyTest {
             ),
         )
         assertEquals(
-            "Office is monitoring arrivals. Other monitored places stay live.",
+            "Office is monitoring arrivals. Other monitored places stay registered.",
             alreadyInsideResultMessage(
                 placeLabel = "Office",
                 decision = ArrivalDecision.WAIT,
@@ -2159,11 +2159,11 @@ class UserStoryCopyTest {
             placesSummaryStatusText(monitoredCount = 0, liveCount = 0),
         )
         assertEquals(
-            "1 place live",
+            "1 place registered",
             placesSummaryStatusText(monitoredCount = 1, liveCount = 1),
         )
         assertEquals(
-            "2 places live",
+            "2 places registered",
             placesSummaryStatusText(monitoredCount = 2, liveCount = 2),
         )
         assertEquals(
@@ -2171,11 +2171,11 @@ class UserStoryCopyTest {
             placesSummaryStatusText(monitoredCount = 1, liveCount = 0),
         )
         assertEquals(
-            "2 places live, 1 needs setup",
+            "2 places registered, 1 needs setup",
             placesSummaryStatusText(monitoredCount = 3, liveCount = 2),
         )
         assertEquals(
-            "1 place live",
+            "1 place registered",
             placesSummaryStatusText(monitoredCount = 1, liveCount = 4),
         )
         assertEquals(
@@ -2186,7 +2186,7 @@ class UserStoryCopyTest {
             ),
         )
         assertEquals(
-            "Live: Home, Office",
+            "Registered: Home, Office",
             placesSummaryPlaceNamesText(
                 places = listOf(
                     testPlace(id = "home", label = "Home"),
@@ -2204,7 +2204,7 @@ class UserStoryCopyTest {
             ),
         )
         assertEquals(
-            "Live: Home; needs setup: Gym",
+            "Registered: Home; needs setup: Gym",
             placesSummaryPlaceNamesText(
                 places = listOf(
                     testPlace(id = "home", label = "Home"),
@@ -2214,7 +2214,7 @@ class UserStoryCopyTest {
             ),
         )
         assertEquals(
-            "Live: Home, Office, and 1 more",
+            "Registered: Home, Office, and 1 more",
             placesSummaryPlaceNamesText(
                 places = listOf(
                     testPlace(id = "home", label = "Home"),
@@ -2226,11 +2226,11 @@ class UserStoryCopyTest {
             ),
         )
         assertEquals(
-            "Not live",
+            "Not registered",
             homeDockMonitoringMetaText(monitoredCount = 0, liveCount = 0),
         )
         assertEquals(
-            "1 live",
+            "1 registered",
             homeDockMonitoringMetaText(monitoredCount = 1, liveCount = 1),
         )
         assertEquals(
@@ -2242,12 +2242,38 @@ class UserStoryCopyTest {
             homeDockMonitoringMetaText(monitoredCount = 2, liveCount = 0),
         )
         assertEquals(
-            "1 live, 1 setup",
+            "1 registered, 1 setup",
             homeDockMonitoringMetaText(monitoredCount = 2, liveCount = 1),
         )
         assertEquals(
-            "1 live",
+            "1 registered",
             homeDockMonitoringMetaText(monitoredCount = 1, liveCount = 4),
+        )
+        assertEquals(
+            "1 registered, 1 setup | Auto-start | 45m | 120 m | Office",
+            homeDockCollapsedStatusDetail(
+                stateLabel = "Registered",
+                monitoringMetaText = "1 registered, 1 setup",
+                monitoredCount = 2,
+                liveCount = 1,
+                activePlaceAutoStart = true,
+                durationMinutes = 45,
+                radiusMeters = 120f,
+                placeLabel = "Office",
+            ),
+        )
+        assertEquals(
+            "Registered | Confirm first | 45m | 120 m | Office",
+            homeDockCollapsedStatusDetail(
+                stateLabel = "Registered",
+                monitoringMetaText = "1 registered",
+                monitoredCount = 1,
+                liveCount = 1,
+                activePlaceAutoStart = false,
+                durationMinutes = 45,
+                radiusMeters = 120f,
+                placeLabel = "Office",
+            ),
         )
         val limitMessage = GeofenceManager.monitoredPlaceLimitMessage()
         assertEquals(
@@ -3033,7 +3059,7 @@ class UserStoryCopyTest {
     }
 
     @Test
-    fun placeMonitoringStatusLabelsSeparateTimerLiveSetupAndPaused() {
+    fun placeMonitoringStatusLabelsSeparateTimerRegisteredSetupAndPaused() {
         assertEquals(
             "Timer here",
             placeMonitoringStatusLabel(
@@ -3043,7 +3069,7 @@ class UserStoryCopyTest {
             ),
         )
         assertEquals(
-            "Monitoring live",
+            "Registered",
             placeMonitoringStatusLabel(
                 monitoringEnabled = true,
                 isRegistered = true,
@@ -3202,7 +3228,7 @@ class UserStoryCopyTest {
             placeRestoredMessage("Gym", focusRestored = true),
         )
         assertEquals(
-            "Gym restored to Places. Monitoring is paused because the live-place limit is full.",
+            "Gym restored to Places. Monitoring is paused because the monitoring limit is full.",
             placeRestoredMessage("Gym", monitoringPausedByLimit = true),
         )
         assertEquals("Place removed from Places", placeRemovedMessage("Saved place"))
@@ -3229,11 +3255,11 @@ class UserStoryCopyTest {
             ),
         )
         assertEquals(
-            "Gym paused. Other monitored places stay live.",
+            "Gym paused. Other monitored places stay registered.",
             placePausedMessage("Gym"),
         )
         assertEquals(
-            "Place paused. Other monitored places stay live.",
+            "Place paused. Other monitored places stay registered.",
             placePausedMessage("Selected place"),
         )
         assertEquals(
@@ -3247,7 +3273,7 @@ class UserStoryCopyTest {
     }
 
     @Test
-    fun monitoringHealthExplainsHealthyLiveState() {
+    fun monitoringHealthExplainsRegisteredStateWithoutOverclaimingDelivery() {
         val health = monitoringHealthState(
             placesCount = 2,
             monitoredCount = 2,
@@ -3258,8 +3284,12 @@ class UserStoryCopyTest {
             batteryReliabilityStatus = batteryStatus(),
         )
 
-        assertEquals("Monitoring live", health.title)
-        assertEquals("Healthy", health.stateLabel)
+        assertEquals("Monitoring registered", health.title)
+        assertEquals("Registered", health.stateLabel)
+        assertEquals(
+            "2 places registered on this phone. Android may still delay events in Battery Saver or Doze.",
+            health.detail,
+        )
         assertEquals(true, health.healthy)
         assertEquals(MonitoringHealthAction.None, health.action)
     }
@@ -3304,7 +3334,7 @@ class UserStoryCopyTest {
         )
         assertEquals("Monitoring needs setup", noneLiveHealth.title)
         assertEquals(
-            "3 places enabled, but none are live yet. Tap Finish setup to restore arrival detection.",
+            "3 places enabled, but none are registered yet. Tap Finish setup to restore arrival detection.",
             noneLiveHealth.detail,
         )
         assertEquals("Needs setup", noneLiveHealth.stateLabel)
@@ -3323,7 +3353,7 @@ class UserStoryCopyTest {
 
         assertEquals("Some places need setup", health.title)
         assertEquals(
-            "1 place live; 2 places need setup. Tap Finish setup to restore arrival detection.",
+            "1 place registered; 2 places need setup. Tap Finish setup to restore arrival detection.",
             health.detail,
         )
         assertEquals("Partial", health.stateLabel)
@@ -3346,7 +3376,7 @@ class UserStoryCopyTest {
         assertEquals("Some places paused", health.title)
         assertEquals("Limit", health.stateLabel)
         assertEquals(
-            "Dwell paused 3 extra monitored places because the live monitoring limit is ${DwellPlace.MAX_MONITORED_PLACES}. Pause other monitored places before turning them back on.",
+            "Dwell paused 3 extra monitored places because the monitoring limit is ${DwellPlace.MAX_MONITORED_PLACES}. Pause other monitored places before turning them back on.",
             health.detail,
         )
         assertEquals("", health.actionLabel)
@@ -3381,9 +3411,27 @@ class UserStoryCopyTest {
                 isIgnoringOptimizations = false,
             ),
         )
-        assertEquals("Monitoring live", optimizedNormalDevice.title)
+        assertEquals("Monitoring registered", optimizedNormalDevice.title)
         assertEquals(true, optimizedNormalDevice.healthy)
         assertEquals(MonitoringHealthAction.None, optimizedNormalDevice.action)
+
+        val batterySaverRisk = monitoringHealthState(
+            placesCount = 1,
+            monitoredCount = 1,
+            liveCount = 1,
+            setupIssue = null,
+            monitoringError = "",
+            exactAlarmAllowed = true,
+            batteryReliabilityStatus = batteryStatus(
+                isKnownAggressiveOem = false,
+                isIgnoringOptimizations = false,
+                isPowerSaveMode = true,
+            ),
+        )
+        assertEquals("Battery may block monitoring", batterySaverRisk.title)
+        assertEquals("Battery risk", batterySaverRisk.stateLabel)
+        assertEquals("Review battery", batterySaverRisk.actionLabel)
+        assertEquals(MonitoringHealthAction.OpenBattery, batterySaverRisk.action)
 
         val batteryRisk = monitoringHealthState(
             placesCount = 1,
@@ -3397,7 +3445,7 @@ class UserStoryCopyTest {
                 isIgnoringOptimizations = false,
             ),
         )
-        assertEquals("Monitoring live, battery may delay", batteryRisk.title)
+        assertEquals("Battery may block monitoring", batteryRisk.title)
         assertEquals("Review battery", batteryRiskActionLabel())
         assertEquals("Review battery", batteryRisk.actionLabel)
         assertEquals(MonitoringHealthAction.OpenBattery, batteryRisk.action)
@@ -3450,6 +3498,16 @@ class UserStoryCopyTest {
         assertEquals("Open app settings", backgroundLocationHelpActionLabel())
 
         assertEquals(
+            "Battery Saver is on and may stop Dwell from receiving background arrivals. Turn off Battery Saver first.",
+            batteryHelpMessage(
+                batteryStatus(
+                    isKnownAggressiveOem = false,
+                    isIgnoringOptimizations = false,
+                    isPowerSaveMode = true,
+                ),
+            ),
+        )
+        assertEquals(
             "Test may delay background arrivals. Open app info, then Battery, and choose Unrestricted.",
             batteryHelpMessage(
                 batteryStatus(
@@ -3464,6 +3522,16 @@ class UserStoryCopyTest {
                 batteryStatus(
                     isKnownAggressiveOem = false,
                     isIgnoringOptimizations = false,
+                ),
+            ),
+        )
+        assertEquals(
+            "Open Battery Saver",
+            batteryHelpActionLabel(
+                batteryStatus(
+                    isKnownAggressiveOem = false,
+                    isIgnoringOptimizations = false,
+                    isPowerSaveMode = true,
                 ),
             ),
         )
@@ -3535,11 +3603,13 @@ class UserStoryCopyTest {
     private fun batteryStatus(
         isKnownAggressiveOem: Boolean = false,
         isIgnoringOptimizations: Boolean = true,
+        isPowerSaveMode: Boolean = false,
     ): BatteryReliabilityStatus =
         BatteryReliabilityStatus(
             manufacturer = "Test",
             isKnownAggressiveOem = isKnownAggressiveOem,
             isIgnoringOptimizations = isIgnoringOptimizations,
+            isPowerSaveMode = isPowerSaveMode,
         )
 
     private data class DeletionTransitionCase(

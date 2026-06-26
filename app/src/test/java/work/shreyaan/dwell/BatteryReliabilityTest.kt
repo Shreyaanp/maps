@@ -41,6 +41,22 @@ class BatteryReliabilityTest {
     }
 
     @Test
+    fun batterySaverStateNamesAutoStartRisk() {
+        val status = BatteryReliabilityStatus(
+            manufacturer = "Google",
+            isKnownAggressiveOem = false,
+            isIgnoringOptimizations = false,
+            isPowerSaveMode = true,
+        )
+
+        assertEquals("Battery saver on", status.label)
+        assertEquals(
+            "Battery Saver is on and may stop Dwell from receiving background arrivals. Turn off Battery Saver or choose Unrestricted for Dwell.",
+            status.detail,
+        )
+    }
+
+    @Test
     fun settingsFlowDoesNotUseDirectBatteryOptimizationExemptionRequest() {
         assertFalse(
             BatteryReliability.settingsActionOrder()
@@ -53,6 +69,10 @@ class BatteryReliabilityTest {
         assertTrue(
             BatteryReliability.settingsActionOrder()
                 .contains(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        )
+        assertEquals(
+            Settings.ACTION_BATTERY_SAVER_SETTINGS,
+            BatteryReliability.settingsActionOrder(powerSaveMode = true).first(),
         )
     }
 }
